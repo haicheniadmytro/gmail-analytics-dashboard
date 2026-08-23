@@ -390,14 +390,13 @@ def analyze_emails(df, user_email):
 
 
 # ============================================================
-# АНАЛІЗ ЦЕПОЧОК (виправлено)
+# АНАЛІЗ ЛАНЦЮЖКІВ (threads) – перейменовано з цепочок
 # ============================================================
 
 def build_threads_analysis(df):
     if df.empty:
         return None
 
-    # Додаємо clean_to до списку колонок
     emails = df[["message_id_clean", "in_reply_to_clean", "references_clean", "normalized_subject",
                  "parsed_date", "direction", "clean_from", "clean_to", "sender_name", "subject",
                  "is_reply_subject"]].copy()
@@ -474,7 +473,6 @@ def build_threads_analysis(df):
         length = len(thread_emails)
         initiator = first["clean_from"] if first["direction"] == "Вхідний" else "Я"
         initiator_name = first["sender_name"] if first["direction"] == "Вхідний" else "Я"
-        # Тепер clean_to існує
         participants = set(thread_emails["clean_from"].dropna().tolist() + thread_emails["clean_to"].dropna().tolist())
         participants = [p for p in participants if p]
         num_participants = len(participants)
@@ -534,7 +532,7 @@ def build_threads_analysis(df):
     stale_count = len(stale)
 
     initiator_counts = thread_df["initiator"].value_counts().head(10).reset_index()
-    initiator_counts.columns = ["Контакт", "Цепочок"]
+    initiator_counts.columns = ["Контакт", "Ланцюжків"]
 
     length_dist = thread_df["length"].value_counts().sort_index().reset_index()
     length_dist.columns = ["Довжина", "Кількість"]
@@ -762,7 +760,7 @@ if has_valid_data():
     st.divider()
 
     tab_dashboard, tab_contacts, tab_activity, tab_topics, tab_productivity, tab_response_time, tab_trends, tab_threads = st.tabs(
-        ["🏠 Огляд", "👥 Контакти", "🔥 Активність", "🔤 Теми", "⚖️ Продуктивність", "⏱️ Час відповіді", "📈 Динаміка", "🧵 Цепочки"]
+        ["🏠 Огляд", "👥 Контакти", "🔥 Активність", "🔤 Теми", "⚖️ Продуктивність", "⏱️ Час відповіді", "📈 Динаміка", "🧵 Ланцюжки"]
     )
 
     # ========== TAB 1 — ОГЛЯД ==========
@@ -810,16 +808,17 @@ if has_valid_data():
                 "total_emails": "Листів",
                 "first_contact": "Перший контакт",
                 "last_contact": "Останній контакт",
-                "contact_score": "Рейтинг контакту ℹ️",
+                "contact_score": "Рейтинг контакту",
                 "days_since_contact": "Днів від останнього контакту",
             }, inplace=True)
-            st.caption("ℹ️ **Рейтинг контакту** = (обсяг листів × 50 / max_volume) + (частота × 25 / max_frequency) + (актуальність × 25 / (1 + днів_від_контакту/30)). Враховується кількість листів, регулярність спілкування та давність останнього контакту.")
+            # Просте пояснення рейтингу (замість формули)
+            st.caption("ℹ️ **Рейтинг контакту** – показник, який враховує кількість листів, регулярність спілкування та давність останнього контакту. Чим вищий рейтинг, тим активніший контакт.")
             st.dataframe(
-                contacts_display[["Email", "Ім'я", "Листів", "Частка пошти", "Рейтинг контакту ℹ️", "Перший контакт", "Останній контакт", "Днів від останнього контакту"]],
+                contacts_display[["Email", "Ім'я", "Листів", "Частка пошти", "Рейтинг контакту", "Перший контакт", "Останній контакт", "Днів від останнього контакту"]],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Рейтинг контакту ℹ️": st.column_config.Column(help="Рейтинг = (обсяг листів*50/max_volume) + (частота*25/max_frequency) + (актуальність*25/(1+днів_від_контакту/30))")
+                    "Рейтинг контакту": st.column_config.Column(help="Рейтинг враховує кількість листів, частоту спілкування та давність останнього контакту.")
                 }
             )
 
@@ -986,37 +985,54 @@ if has_valid_data():
             daily_display = daily_counts.rename(columns={"date_only": "Дата", "Кількість": "Листів"}).copy()
             st.dataframe(daily_display, use_container_width=True, hide_index=True)
 
-    # ========== TAB 8 — ЦЕПОЧКИ ==========
+    # ========== TAB 8 — ЛАНЦЮЖКИ (перейменовано) ==========
     with tab_threads:
-        st.subheader("🧵 Аналіз цепочок листування")
+        st.subheader("🧵 Аналіз ланцюжків листування")
 
         if thread_analysis is None or thread_df is None or thread_df.empty:
-            st.info("Недостатньо даних для аналізу цепочок. Переконайтеся, що у листів є Message-ID та In-Reply-To/References.")
+            st.info("Недостатньо даних для аналізу ланцюжків. Переконайтеся, що у листів є Message-ID та In-Reply-To/References.")
         else:
             col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("🧵 Всього цепочок", thread_analysis["total_threads"])
+                st.metric("🧵 Всього ланцюжків", thread_analysis["total_threads"])
             with col2:
                 st.metric("📊 Середня довжина", f"{thread_analysis['avg_length']:.1f}")
             with col3:
                 st.metric("📊 Медіанна довжина", f"{thread_analysis['median_length']:.0f}")
             with col4:
-                st.metric("📈 Найдовша цепочка", f"{thread_analysis['max_length']} листів")
+                st.metric("📈 Найдовший ланцюжок", f"{thread_analysis['max_length']} листів")
             with col5:
                 st.metric("🔄 Відповідей", f"{thread_analysis['reply_rate']*100:.1f}%")
 
             st.divider()
 
-            st.subheader("📊 Розподіл цепочок за довжиною")
+            # Діаграма Парето для розподілу довжини ланцюжків
+            st.subheader("📊 Розподіл ланцюжків за довжиною (діаграма Парето)")
             if not thread_analysis["length_dist"].empty:
-                chart = alt.Chart(thread_analysis["length_dist"]).mark_bar().encode(
-                    x=alt.X("Довжина:O", title="Кількість листів у цепочці"),
-                    y=alt.Y("Кількість:Q", title="Кількість цепочок"),
-                    tooltip=["Довжина", "Кількість"]
-                ).properties(height=300)
+                length_df = thread_analysis["length_dist"].sort_values("Довжина")
+                # Обчислюємо кумулятивний відсоток
+                total = length_df["Кількість"].sum()
+                length_df["Кумулятивний %"] = (length_df["Кількість"].cumsum() / total * 100).round(1)
+                
+                # Стовпчики
+                bars = alt.Chart(length_df).mark_bar(color="steelblue").encode(
+                    x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
+                    y=alt.Y("Кількість:Q", title="Кількість ланцюжків"),
+                    tooltip=["Довжина", "Кількість", "Кумулятивний %"]
+                )
+                
+                # Лінія Парето (кумулятивний %)
+                line = alt.Chart(length_df).mark_line(color="red", point=True).encode(
+                    x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
+                    y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
+                    tooltip=["Довжина", "Кумулятивний %"]
+                )
+                
+                # Об'єднуємо
+                chart = (bars + line).resolve_scale(y="independent").properties(height=400)
                 st.altair_chart(chart, use_container_width=True)
 
-            st.subheader("🏆 Найдовші цепочки")
+            st.subheader("🏆 Найдовші ланцюжки")
             longest_threads = thread_df.nlargest(10, "length")
             if not longest_threads.empty:
                 display = longest_threads[["subject", "length", "initiator_name", "num_participants", "first_date", "last_date"]].copy()
@@ -1032,16 +1048,16 @@ if has_valid_data():
                 }, inplace=True)
                 st.dataframe(display, use_container_width=True, hide_index=True)
 
-            st.subheader("🔄 Статистика відповідей у цепочках")
+            st.subheader("🔄 Статистика відповідей у ланцюжках")
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.metric("Цепочок з відповідями (>1 листа)", thread_analysis["threads_with_reply"])
+                st.metric("Ланцюжків з відповідями (>1 листа)", thread_analysis["threads_with_reply"])
             with c2:
-                st.metric("Цепочок без відповідей (1 лист)", thread_analysis["total_threads"] - thread_analysis["threads_with_reply"])
+                st.metric("Ланцюжків без відповідей (1 лист)", thread_analysis["total_threads"] - thread_analysis["threads_with_reply"])
             with c3:
                 st.metric("Середня кількість учасників", f"{thread_analysis['avg_participants']:.1f}")
 
-            st.subheader("⏳ Завислі цепочки (без відповіді >7 днів)")
+            st.subheader("⏳ Завислі ланцюжки (без відповіді >7 днів)")
             if thread_analysis["stale_count"] > 0:
                 stale_display = thread_analysis["stale_df"][["subject", "length", "last_date", "initiator_name"]].copy()
                 stale_display["last_date"] = stale_display["last_date"].dt.strftime("%d.%m.%Y %H:%M")
@@ -1054,22 +1070,22 @@ if has_valid_data():
                 st.dataframe(stale_display.head(20), use_container_width=True, hide_index=True)
                 st.caption(f"Всього завислих: {thread_analysis['stale_count']}")
             else:
-                st.success("✅ Немає завислих цепочок (усі мають відповідь протягом останніх 7 днів).")
+                st.success("✅ Немає завислих ланцюжків (усі мають відповідь протягом останніх 7 днів).")
 
-            st.subheader("👥 Топ контактів за кількістю цепочок")
+            st.subheader("👥 Топ контактів за кількістю ланцюжків")
             if not thread_analysis["initiator_counts"].empty:
                 chart = alt.Chart(thread_analysis["initiator_counts"].head(10)).mark_bar().encode(
-                    x=alt.X("Цепочок:Q", title="Кількість цепочок"),
+                    x=alt.X("Ланцюжків:Q", title="Кількість ланцюжків"),
                     y=alt.Y("Контакт:N", sort="-x", title="Контакт"),
-                    tooltip=["Контакт", "Цепочок"]
+                    tooltip=["Контакт", "Ланцюжків"]
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
-            st.subheader("📈 Динаміка нових цепочок за місяцями")
+            st.subheader("📈 Динаміка нових ланцюжків за місяцями")
             if not thread_analysis["monthly_new"].empty:
                 chart = alt.Chart(thread_analysis["monthly_new"]).mark_bar().encode(
                     x=alt.X("first_month:O", title="Місяць"),
-                    y=alt.Y("new_threads:Q", title="Нових цепочок"),
+                    y=alt.Y("new_threads:Q", title="Нових ланцюжків"),
                     tooltip=["first_month", "new_threads"]
                 ).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
