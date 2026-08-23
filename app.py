@@ -1248,14 +1248,11 @@ def build_contact_ranking(df):
         errors="coerce",
     ).fillna(0).astype(int)
 
-    # --------------------------------------------------------
-    # Активність
-    # --------------------------------------------------------
+    # Якщо немає листів, повертаємо порожній DataFrame
+    if contacts["total_emails"].sum() == 0:
+        return pd.DataFrame()
 
-    max_volume = max(
-        contacts["total_emails"].max(),
-        1,  # якщо максимум 0, то використовуємо 1
-    )
+    max_volume = contacts["total_emails"].max()
 
     contacts["volume_score"] = (
         contacts["total_emails"]
@@ -1263,10 +1260,7 @@ def build_contact_ranking(df):
         * 50
     )
 
-    # --------------------------------------------------------
     # Тривалість взаємодії
-    # --------------------------------------------------------
-
     contacts["first_contact"] = pd.to_datetime(
         contacts["first_contact"]
     )
@@ -1295,13 +1289,16 @@ def build_contact_ranking(df):
         * 25
     )
 
-    # --------------------------------------------------------
     # Актуальність
-    # --------------------------------------------------------
-
-    latest_date = df["date_only"].max()
-    if pd.isna(latest_date):
+    # Беремо останню дату з усього датафрейму (не тільки вхідні)
+    latest_date_series = df["date_only"].dropna()
+    if latest_date_series.empty:
         latest_date = date.today()
+    else:
+        latest_date = latest_date_series.max()
+        # Якщо це pandas Timestamp, перетворюємо на date
+        if hasattr(latest_date, 'date'):
+            latest_date = latest_date.date()
 
     contacts["days_since_contact"] = (
         pd.to_datetime(latest_date)
@@ -1319,10 +1316,6 @@ def build_contact_ranking(df):
             )
         )
     )
-
-    # --------------------------------------------------------
-    # Фінальний рейтинг
-    # --------------------------------------------------------
 
     contacts["contact_score"] = (
         contacts["volume_score"]
