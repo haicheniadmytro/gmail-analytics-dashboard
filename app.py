@@ -35,25 +35,40 @@ def get_credentials():
             if 'gmail_credentials' in st.secrets:
                 try:
                     credentials_dict = json.loads(st.secrets['gmail_credentials'])
-                    flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES)
+                    # Витягуємо redirect_uri з конфігурації (або задаємо за замовчуванням)
+                    redirect_uris = credentials_dict.get('installed', {}).get('redirect_uris', [])
+                    if not redirect_uris:
+                        redirect_uris = credentials_dict.get('web', {}).get('redirect_uris', [])
+                    redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
+                    
+                    # Створюємо flow з явним redirect_uri
+                    flow = InstalledAppFlow.from_client_config(
+                        credentials_dict,
+                        SCOPES,
+                        redirect_uri=redirect_uri
+                    )
                     st.info("🔐 Використовую облікові дані з Streamlit Secrets")
                 except Exception as e:
                     st.error(f"❌ Помилка парсингу Secrets: {e}")
                     st.stop()
             elif os.path.exists('credentials.json'):
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                # Для локального файлу також створимо flow з redirect_uri
+                with open('credentials.json', 'r') as f:
+                    creds_data = json.load(f)
+                redirect_uris = creds_data.get('installed', {}).get('redirect_uris', [])
+                if not redirect_uris:
+                    redirect_uris = creds_data.get('web', {}).get('redirect_uris', [])
+                redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
+                
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json',
+                    SCOPES,
+                    redirect_uri=redirect_uri
+                )
                 st.info("📁 Використовую локальний файл credentials.json")
             else:
                 st.error("❌ Облікові дані не знайдено! Додайте 'gmail_credentials' у Secrets або завантажте 'credentials.json'.")
                 st.stop()
-
-            # --- Визначаємо redirect_uri (беремо перший зі списку або використовуємо http://localhost) ---
-            client_config = flow.client_config
-            redirect_uris = client_config.get('redirect_uris', [])
-            if redirect_uris:
-                redirect_uri = redirect_uris[0]
-            else:
-                redirect_uri = 'http://localhost'
 
             # --- Визначення середовища: хмара, якщо є Secrets ---
             in_cloud = 'gmail_credentials' in st.secrets
@@ -61,7 +76,7 @@ def get_credentials():
             if in_cloud:
                 # ========== РЕЖИМ ХМАРИ (ручне введення коду) ==========
                 st.info("🌐 Ви в хмарному середовищі. Авторизація відбуватиметься вручну.")
-                # Генеруємо URL для авторизації (redirect_uri береться з конфігурації)
+                # Генеруємо URL для авторизації (redirect_uri вже задано у flow)
                 auth_url, state = flow.authorization_url(prompt='consent')
                 st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут, щоб авторизуватися]({auth_url})")
                 st.markdown("**2. Після входу скопіюйте код із адресного рядка браузера (параметр `code=...`) та вставте його нижче:**")
@@ -70,8 +85,8 @@ def get_credentials():
 
                 if auth_code:
                     try:
-                        # Обмінюємо код на токен, передаючи redirect_uri (він має збігатися з тим, що був використаний у URL)
-                        flow.fetch_token(code=auth_code, redirect_uri=redirect_uri)
+                        # Обмінюємо код на токен (redirect_uri вже задано у flow)
+                        flow.fetch_token(code=auth_code)
                         creds = flow.credentials
                         st.success("✅ Авторизацію успішно завершено!")
                     except Exception as e:
@@ -84,11 +99,11 @@ def get_credentials():
                 # ========== ЛОКАЛЬНИЙ РЕЖИМ (автоматичне відкриття браузера) ==========
                 st.info("🖥️ Локальне середовище. Відкриваємо браузер для авторизації...")
                 try:
-                    # Відкриваємо URL без redirect_uri (він береться з конфігурації)
+                    # Відкриваємо URL (redirect_uri вже задано у flow)
                     webbrowser.open(flow.authorization_url(prompt='consent')[0])
                 except:
                     pass
-                # run_local_server не приймає redirect_uri, він сам його використовує з конфігурації
+                # Запускаємо локальний сервер
                 creds = flow.run_local_server(port=0, open_browser=False)
 
             # Зберігаємо токен для наступних запусків
