@@ -48,8 +48,8 @@ def extract_name(from_header):
     return extract_email_address(from_header)
 
 
-# --- 2. Завантаження через IMAP (пакетне завантаження) ---
-def fetch_emails_imap(email_user, app_password, max_results=1000):
+# --- 2. Оптимізоване завантаження через IMAP ---
+def fetch_emails_imap(email_user, app_password, max_results=10000):
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         clean_password = app_password.replace(" ", "")
@@ -71,7 +71,8 @@ def fetch_emails_imap(email_user, app_password, max_results=1000):
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        chunk_size = 100
+        # Збільшено пачку до 500 для надшвидкого завантаження 100 000+ листів
+        chunk_size = 500
         total_to_fetch = len(email_ids_to_fetch)
 
         for i in range(0, total_to_fetch, chunk_size):
@@ -132,13 +133,10 @@ def analyze_emails(df):
     df["month"] = df["parsed_date"].dt.strftime("%Y-%m")
     df["hour"] = df["parsed_date"].dt.hour
     df["day_name"] = df["parsed_date"].dt.day_name()
-    df["day_num"] = df["parsed_date"].dt.dayofweek  # 0 = Monday, 6 = Sunday
+    df["day_num"] = df["parsed_date"].dt.dayofweek
 
     df["clean_from"] = df["from"].apply(extract_email_address)
     df["sender_name"] = df["from"].apply(extract_name)
-    df["sender_domain"] = df["clean_from"].apply(
-        lambda x: x.split("@")[-1] if "@" in x else ""
-    )
     df["is_reply"] = df["subject"].str.startswith("Re:", na=False)
 
     return df
@@ -151,9 +149,7 @@ st.title("📊 Gmail Pro Analytics Dashboard")
 # Сайдбар авторизації та налаштувань
 with st.sidebar:
     st.header("🔑 Авторизація IMAP")
-    user_email = st.text_input(
-        "Ваш Email", placeholder="name@domain.com"
-    )
+    user_email = st.text_input("Ваш Email", placeholder="name@domain.com")
     app_password = st.text_input(
         "Пароль додатка (16 символів)",
         type="password",
@@ -161,12 +157,13 @@ with st.sidebar:
     )
 
     st.divider()
+    # Розширено ліміт до 100 000 листів
     max_emails = st.slider(
         "Кількість останніх листів",
-        min_value=100,
-        max_value=10000,
-        value=1000,
-        step=100,
+        min_value=500,
+        max_value=100000,
+        value=10000,
+        step=1000,
     )
     btn_fetch = st.button("🔄 Завантажити пошту", type="primary")
 
@@ -211,40 +208,30 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
         df = full_df.copy()
 
     # Показ загальних метрик
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("📧 Проаналізовано листів", len(df))
     with col2:
         st.metric("👤 Унікальних відправників", df["clean_from"].nunique())
     with col3:
-        top_domain = (
-            df["sender_domain"].mode().iloc[0]
-            if not df["sender_domain"].mode().empty
-            else "N/A"
-        )
-        st.metric("🌐 Топ-домен", top_domain)
-    with col4:
         st.metric("↩️ Листів-відповідей (Re:)", df["is_reply"].sum())
 
     st.divider()
 
-    # Таби аналітики
-    tab_vip, tab_heatmap, tab_senders, tab_time, tab_data = st.tabs(
+    # Таби аналітики (без доменів та без таблиці)
+    tab_vip, tab_heatmap, tab_senders, tab_time = st.tabs(
         [
             "🌟 Контакти Top-VIP",
             "🔥 Heatmap (Години × Дні)",
             "👥 Найпопулярніші адресати",
             "📅 Тренд за місяцями/роками",
-            "📊 Таблиця даних",
         ]
     )
 
     # TAB 1: Top-VIP Контакти
     with tab_vip:
         st.subheader("🌟 Рейтинг Top-VIP Контактів")
-        st.markdown(
-            "Топ найактивніших відправників з деталізацією листування."
-        )
+        st.markdown("Топ найактивніших відправників з деталізацією листування.")
 
         vip_df = (
             df.groupby(["clean_from", "sender_name"])
@@ -270,13 +257,13 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
             inplace=True,
         )
 
-        st.dataframe(vip_df.head(20), use_container_width=True, hide_index=True)
+        st.dataframe(vip_df.head(30), use_container_width=True, hide_index=True)
 
-    # TAB 2: Heatmap (Теплова карта)
+    # TAB 2: Heatmap
     with tab_heatmap:
         st.subheader("🔥 Теплова карта активності (Години × Дні тижня)")
         st.markdown(
-            "Темніші квадрати показують години з найбільшою кількістю листів."
+            "Темніші квадрати показують години з наибольшою кількістю листів."
         )
 
         clean_hm = df.dropna(subset=["day_num", "hour"]).copy()
@@ -328,41 +315,22 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
 
     # TAB 3: Найпопулярніші адресати
     with tab_senders:
-        col_s1, col_s2 = st.columns(2)
+        st.subheader("👥 Топ-20 Найактивніших Відправників")
+        top_s = df["clean_from"].value_counts().head(20).reset_index()
+        top_s.columns = ["Email", "Кількість"]
 
-        with col_s1:
-            st.subheader("👥 Топ-15 Відправників")
-            top_s = df["clean_from"].value_counts().head(15).reset_index()
-            top_s.columns = ["Email", "Кількість"]
-
-            chart_senders = (
-                alt.Chart(top_s)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Кількість:Q"),
-                    y=alt.Y("Email:N", sort="-x", title="Email"),
-                    color=alt.value("#4C78A8"),
-                )
-                .properties(height=400)
+        chart_senders = (
+            alt.Chart(top_s)
+            .mark_bar()
+            .encode(
+                x=alt.X("Кількість:Q", title="Кількість листів"),
+                y=alt.Y("Email:N", sort="-x", title="Email відправника"),
+                color=alt.value("#4C78A8"),
+                tooltip=["Email", "Кількість"],
             )
-            st.altair_chart(chart_senders, use_container_width=True)
-
-        with col_s2:
-            st.subheader("🌐 Топ-15 Доменів")
-            top_d = df["sender_domain"].value_counts().head(15).reset_index()
-            top_d.columns = ["Домен", "Кількість"]
-
-            chart_domains = (
-                alt.Chart(top_d)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Кількість:Q"),
-                    y=alt.Y("Домен:N", sort="-x", title="Домен"),
-                    color=alt.value("#F28E2B"),
-                )
-                .properties(height=400)
-            )
-            st.altair_chart(chart_domains, use_container_width=True)
+            .properties(height=500)
+        )
+        st.altair_chart(chart_senders, use_container_width=True)
 
     # TAB 4: Тренд за місяцями/роками
     with tab_time:
@@ -381,33 +349,9 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
                     y=alt.Y("count:Q", title="Кількість листів"),
                     tooltip=["month", "count"],
                 )
-                .properties(height=350)
+                .properties(height=400)
             )
             st.altair_chart(chart_month, use_container_width=True)
-
-    # TAB 5: Таблиця даних та експорт
-    with tab_data:
-        st.subheader("📊 Детальний список листів")
-        st.dataframe(
-            df[
-                [
-                    "parsed_date",
-                    "sender_name",
-                    "clean_from",
-                    "subject",
-                    "is_reply",
-                ]
-            ],
-            use_container_width=True,
-        )
-
-        csv_data = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="📥 Завантажити повний CSV",
-            data=csv_data,
-            file_name="gmail_full_analytics.csv",
-            mime="text/csv",
-        )
 
 else:
     st.info(
