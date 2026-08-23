@@ -15,9 +15,9 @@ import webbrowser
 # --- Конфігурація ---
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# --- Універсальна авторизація (працює і в хмарі, і локально) ---
-@st.cache_resource
-def get_gmail_service():
+# --- Функція для отримання облікових даних (БЕЗ КЕШУ) ---
+def get_credentials():
+    """Повертає облікові дані, використовуючи інтерактивний потік (з віджетами)."""
     creds = None
     token_file = 'token.pickle'
 
@@ -77,15 +77,19 @@ def get_gmail_service():
                     webbrowser.open(flow.authorization_url()[0])
                 except:
                     pass
-                # Запускаємо локальний сервер (без відкриття браузера, оскільки ми вже відкрили)
                 creds = flow.run_local_server(port=0, open_browser=False)
 
-        # Зберігаємо токен для наступних запусків
-        with open(token_file, 'wb') as token:
-            pickle.dump(creds, token)
+            # Зберігаємо токен для наступних запусків
+            with open(token_file, 'wb') as token:
+                pickle.dump(creds, token)
 
+    return creds
+
+# --- Кешована функція для створення сервісу (тільки після отримання creds) ---
+@st.cache_resource
+def get_gmail_service(creds):
+    """Створює сервіс Gmail API з використанням наданих облікових даних."""
     return build('gmail', 'v1', credentials=creds)
-
 
 # --- Функції завантаження та аналізу даних ---
 def get_email_metadata(service, max_results=500):
@@ -120,7 +124,6 @@ def get_email_metadata(service, max_results=500):
     st.success(f"✅ Завантажено {len(email_data)} листів!")
     return pd.DataFrame(email_data)
 
-
 def parse_email_date(date_str):
     try:
         for fmt in ['%a, %d %b %Y %H:%M:%S %z', '%d %b %Y %H:%M:%S %z',
@@ -132,7 +135,6 @@ def parse_email_date(date_str):
         return pd.NaT
     except:
         return pd.NaT
-
 
 def analyze_emails(df):
     df['parsed_date'] = df['date'].apply(parse_email_date)
@@ -156,7 +158,11 @@ with st.sidebar:
     if st.button("🔄 Завантажити дані з Gmail", type="primary"):
         with st.spinner("Підключення до Gmail API..."):
             try:
-                service = get_gmail_service()
+                # 1. Отримуємо облікові дані (без кешу, бо там віджети)
+                creds = get_credentials()
+                # 2. Будуємо сервіс (кешовано)
+                service = get_gmail_service(creds)
+                # 3. Завантажуємо дані
                 df = get_email_metadata(service, max_results=max_emails)
                 df = analyze_emails(df)
                 st.session_state['data'] = df
