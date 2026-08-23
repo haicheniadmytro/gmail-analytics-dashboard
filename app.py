@@ -435,7 +435,7 @@ def search_folder(
 
 
 # ============================================================
-# ЗАВАНТАЖЕННЯ ЗАГОЛОВКІВ
+# ЗАВАНТАЖЕННЯ ЗАГОЛОВКІВ (оновлено – без обмеження max_results)
 # ============================================================
 
 def fetch_folder_headers(
@@ -443,14 +443,10 @@ def fetch_folder_headers(
     folder,
     start_date=None,
     end_date=None,
-    max_results=20000,
     folder_type="inbox",
 ):
     """
-    Завантажує тільки заголовки листів.
-
-    ВАЖЛИВО:
-    IMAP команда повинна бути одним рядком.
+    Завантажує ВСІ заголовки листів у папці за період (без обмеження кількості).
     """
 
     ids = search_folder(
@@ -463,11 +459,8 @@ def fetch_folder_headers(
     if not ids:
         return []
 
-    # Беремо останні листи
-    ids = ids[-int(max_results):]
-
-    # Новіші спочатку
-    ids.reverse()
+    # Завантажуємо ВСІ знайдені ID (без обрізання)
+    ids.reverse()  # новіші спочатку
 
     result = []
 
@@ -593,7 +586,7 @@ def fetch_folder_headers(
 
 
 # ============================================================
-# ОСНОВНЕ ЗАВАНТАЖЕННЯ GMAIL
+# ОСНОВНЕ ЗАВАНТАЖЕННЯ GMAIL (оновлено)
 # ============================================================
 
 def fetch_emails_imap(
@@ -601,10 +594,9 @@ def fetch_emails_imap(
     app_password,
     start_date=None,
     end_date=None,
-    max_results=20000,
 ):
     """
-    Завантажує Inbox + Sent.
+    Завантажує ВСІ листи Inbox + Sent за період (без обмеження).
     """
 
     mail = None
@@ -640,7 +632,6 @@ def fetch_emails_imap(
             folder="INBOX",
             start_date=start_date,
             end_date=end_date,
-            max_results=max_results,
             folder_type="inbox",
         )
 
@@ -662,7 +653,6 @@ def fetch_emails_imap(
             folder=sent_folder,
             start_date=start_date,
             end_date=end_date,
-            max_results=max_results,
             folder_type="sent",
         )
 
@@ -1194,7 +1184,7 @@ def analyze_topics(df):
 
 
 # ============================================================
-# РЕЙТИНГ КОНТАКТІВ (ВИПРАВЛЕНО)
+# РЕЙТИНГ КОНТАКТІВ (виправлено)
 # ============================================================
 
 def build_contact_ranking(df):
@@ -1290,13 +1280,11 @@ def build_contact_ranking(df):
     )
 
     # Актуальність
-    # Беремо останню дату з усього датафрейму (не тільки вхідні)
     latest_date_series = df["date_only"].dropna()
     if latest_date_series.empty:
         latest_date = date.today()
     else:
         latest_date = latest_date_series.max()
-        # Якщо це pandas Timestamp, перетворюємо на date
         if hasattr(latest_date, 'date'):
             latest_date = latest_date.date()
 
@@ -1363,7 +1351,7 @@ def has_valid_data():
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR (оновлено – без max_emails)
 # ============================================================
 
 is_data_loaded = has_valid_data()
@@ -1445,14 +1433,6 @@ with st.sidebar:
 
     st.divider()
 
-    max_emails = st.number_input(
-        "Максимум листів з кожної папки",
-        min_value=500,
-        max_value=100000,
-        value=20000,
-        step=1000,
-    )
-
     btn_fetch = st.button(
         "🔄 Завантажити пошту",
         type="primary",
@@ -1507,9 +1487,6 @@ if btn_fetch:
                 app_password=app_password,
                 start_date=start_date,
                 end_date=end_date,
-                max_results=int(
-                    max_emails
-                ),
             )
 
             if (
@@ -1610,7 +1587,7 @@ if has_valid_data():
     st.divider()
 
     # ========================================================
-    # KPI
+    # KPI (усі назви українською)
     # ========================================================
 
     col1, col2, col3, col4, col5 = (
@@ -1835,7 +1812,7 @@ if has_valid_data():
             )
 
     # ========================================================
-    # TAB 2 — КОНТАКТИ
+    # TAB 2 — КОНТАКТИ (з підказкою для рейтингу та укр. назвами)
     # ========================================================
 
     with tab_contacts:
@@ -1883,11 +1860,17 @@ if has_valid_data():
                     "last_contact":
                         "Останній контакт",
                     "contact_score":
-                        "Рейтинг контакту",
+                        "Рейтинг контакту ℹ️",
                     "days_since_contact":
                         "Днів від останнього контакту",
                 },
                 inplace=True,
+            )
+
+            # Підказка для рейтингу
+            st.caption(
+                "ℹ️ **Рейтинг контакту** = (обсяг листів × 50 / max_volume) + (частота × 25 / max_frequency) + (актуальність × 25 / (1 + днів_від_контакту/30)). "
+                "Враховується кількість листів, регулярність спілкування та давність останнього контакту."
             )
 
             st.dataframe(
@@ -1897,7 +1880,7 @@ if has_valid_data():
                         "Ім'я",
                         "Листів",
                         "Частка пошти",
-                        "Рейтинг контакту",
+                        "Рейтинг контакту ℹ️",
                         "Перший контакт",
                         "Останній контакт",
                         "Днів від останнього контакту",
@@ -1905,6 +1888,11 @@ if has_valid_data():
                 ],
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Рейтинг контакту ℹ️": st.column_config.Column(
+                        help="Рейтинг = (обсяг листів*50/max_volume) + (частота*25/max_frequency) + (актуальність*25/(1+днів_від_контакту/30))"
+                    )
+                }
             )
 
         st.subheader(
@@ -2392,7 +2380,7 @@ if has_valid_data():
             )
 
     # ========================================================
-    # TAB 6 — ЧАС ВІДПОВІДІ
+    # TAB 6 — ЧАС ВІДПОВІДІ (додано колонку "Ім'я")
     # ========================================================
 
     with tab_response:
@@ -2482,6 +2470,10 @@ if has_valid_data():
                 "👥 Час відповіді за контактами"
             )
 
+            # Отримуємо словник email -> ім'я з основного df
+            name_map = df[["clean_from", "sender_name"]].drop_duplicates("clean_from")
+            name_dict = dict(zip(name_map["clean_from"], name_map["sender_name"]))
+
             contact_response = (
                 response_df
                 .groupby(
@@ -2497,6 +2489,13 @@ if has_valid_data():
                     ]
                 )
                 .reset_index()
+            )
+
+            # Додаємо колонку з ім'ям
+            contact_response["Ім'я"] = (
+                contact_response["contact_email"]
+                .map(name_dict)
+                .fillna("")
             )
 
             contact_response[
@@ -2535,6 +2534,7 @@ if has_valid_data():
                 contact_response[
                     [
                         "Контакт",
+                        "Ім'я",
                         "Відповідей",
                         "Середній час",
                         "Медіанний час",
