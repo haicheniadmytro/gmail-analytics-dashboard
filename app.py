@@ -1194,10 +1194,13 @@ def analyze_topics(df):
 
 
 # ============================================================
-# РЕЙТИНГ КОНТАКТІВ
+# РЕЙТИНГ КОНТАКТІВ (ВИПРАВЛЕНО)
 # ============================================================
 
 def build_contact_ranking(df):
+    """
+    Побудова рейтингу контактів на основі вхідних листів.
+    """
 
     incoming = df[
         df["direction"]
@@ -1236,23 +1239,26 @@ def build_contact_ranking(df):
         .reset_index()
     )
 
+    if contacts.empty:
+        return pd.DataFrame()
+
+    # Переконуємося, що total_emails числові
+    contacts["total_emails"] = pd.to_numeric(
+        contacts["total_emails"],
+        errors="coerce",
+    ).fillna(0).astype(int)
+
     # --------------------------------------------------------
     # Активність
     # --------------------------------------------------------
 
     max_volume = max(
-        contacts[
-            "total_emails"
-        ].max(),
-        1,
+        contacts["total_emails"].max(),
+        1,  # якщо максимум 0, то використовуємо 1
     )
 
-    contacts[
-        "volume_score"
-    ] = (
-        contacts[
-            "total_emails"
-        ]
+    contacts["volume_score"] = (
+        contacts["total_emails"]
         / max_volume
         * 50
     )
@@ -1261,47 +1267,30 @@ def build_contact_ranking(df):
     # Тривалість взаємодії
     # --------------------------------------------------------
 
-    contacts[
-        "days_active"
-    ] = (
-        pd.to_datetime(
-            contacts[
-                "last_contact"
-            ]
-        )
-        - pd.to_datetime(
-            contacts[
-                "first_contact"
-            ]
-        )
+    contacts["first_contact"] = pd.to_datetime(
+        contacts["first_contact"]
+    )
+    contacts["last_contact"] = pd.to_datetime(
+        contacts["last_contact"]
+    )
+
+    contacts["days_active"] = (
+        contacts["last_contact"]
+        - contacts["first_contact"]
     ).dt.days + 1
 
-    contacts[
-        "frequency"
-    ] = (
-        contacts[
-            "total_emails"
-        ]
-        / contacts[
-            "days_active"
-        ].clip(
-            lower=1
-        )
+    contacts["frequency"] = (
+        contacts["total_emails"]
+        / contacts["days_active"].clip(lower=1)
     )
 
     max_frequency = max(
-        contacts[
-            "frequency"
-        ].max(),
+        contacts["frequency"].max(),
         0.0001,
     )
 
-    contacts[
-        "frequency_score"
-    ] = (
-        contacts[
-            "frequency"
-        ]
+    contacts["frequency_score"] = (
+        contacts["frequency"]
         / max_frequency
         * 25
     )
@@ -1310,34 +1299,22 @@ def build_contact_ranking(df):
     # Актуальність
     # --------------------------------------------------------
 
-    latest_date = df[
-        "date_only"
-    ].max()
+    latest_date = df["date_only"].max()
+    if pd.isna(latest_date):
+        latest_date = date.today()
 
-    contacts[
-        "days_since_contact"
-    ] = (
-        pd.to_datetime(
-            latest_date
-        )
-        - pd.to_datetime(
-            contacts[
-                "last_contact"
-            ]
-        )
+    contacts["days_since_contact"] = (
+        pd.to_datetime(latest_date)
+        - contacts["last_contact"]
     ).dt.days
 
-    contacts[
-        "recency_score"
-    ] = (
+    contacts["recency_score"] = (
         25
         * (
             1
             / (
                 1
-                + contacts[
-                    "days_since_contact"
-                ]
+                + contacts["days_since_contact"]
                 / 30
             )
         )
@@ -1347,18 +1324,10 @@ def build_contact_ranking(df):
     # Фінальний рейтинг
     # --------------------------------------------------------
 
-    contacts[
-        "contact_score"
-    ] = (
-        contacts[
-            "volume_score"
-        ]
-        + contacts[
-            "frequency_score"
-        ]
-        + contacts[
-            "recency_score"
-        ]
+    contacts["contact_score"] = (
+        contacts["volume_score"]
+        + contacts["frequency_score"]
+        + contacts["recency_score"]
     ).round(1)
 
     contacts = contacts.sort_values(
