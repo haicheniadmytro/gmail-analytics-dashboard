@@ -390,20 +390,18 @@ def analyze_emails(df, user_email):
 
 
 # ============================================================
-# АНАЛІЗ ЦЕПОЧОК
+# АНАЛІЗ ЦЕПОЧОК (виправлено)
 # ============================================================
 
 def build_threads_analysis(df):
-    """
-    Побудова цепочок на основі References/In-Reply-To та нормалізованої теми.
-    Повертає словник з метриками та DataFrame з інформацією про цепочки.
-    """
     if df.empty:
         return None
 
-    emails = df[["message_id_clean", "in_reply_to_clean", "references_clean", "normalized_subject", "parsed_date", "direction", "clean_from", "sender_name", "subject", "is_reply_subject"]].copy()
+    # Додаємо clean_to до списку колонок
+    emails = df[["message_id_clean", "in_reply_to_clean", "references_clean", "normalized_subject",
+                 "parsed_date", "direction", "clean_from", "clean_to", "sender_name", "subject",
+                 "is_reply_subject"]].copy()
 
-    # Будуємо граф зв'язків
     graph = defaultdict(set)
     all_ids = set(emails["message_id_clean"].dropna().tolist())
 
@@ -421,7 +419,6 @@ def build_threads_analysis(df):
             graph[in_reply].add(msg_id)
             graph[msg_id].add(in_reply)
 
-    # Знаходимо компоненти зв'язності
     visited = set()
     threads = []
     for node in all_ids:
@@ -438,13 +435,11 @@ def build_threads_analysis(df):
                         queue.append(neighbor)
             threads.append(comp)
 
-    # Mapping message_id -> thread_id
     thread_map = {}
     for idx, comp in enumerate(threads):
         for msg_id in comp:
             thread_map[msg_id] = idx
 
-    # Резервне групування за нормалізованою темою для листів без зв'язків
     remaining = emails[~emails["message_id_clean"].isin(thread_map.keys())]
     if not remaining.empty:
         remaining_sorted = remaining.sort_values("parsed_date")
@@ -467,7 +462,6 @@ def build_threads_analysis(df):
             for msg_id in comp:
                 thread_map[msg_id] = thread_id
 
-    # Збираємо інформацію про цепочки
     thread_info = []
     for thread_id, comp in enumerate(threads):
         if not comp:
@@ -480,6 +474,7 @@ def build_threads_analysis(df):
         length = len(thread_emails)
         initiator = first["clean_from"] if first["direction"] == "Вхідний" else "Я"
         initiator_name = first["sender_name"] if first["direction"] == "Вхідний" else "Я"
+        # Тепер clean_to існує
         participants = set(thread_emails["clean_from"].dropna().tolist() + thread_emails["clean_to"].dropna().tolist())
         participants = [p for p in participants if p]
         num_participants = len(participants)
@@ -524,7 +519,6 @@ def build_threads_analysis(df):
 
     thread_df = pd.DataFrame(thread_info)
 
-    # Загальна статистика
     total_threads = len(thread_df)
     avg_length = thread_df["length"].mean()
     median_length = thread_df["length"].median()
