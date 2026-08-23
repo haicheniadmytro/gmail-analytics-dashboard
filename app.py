@@ -390,7 +390,7 @@ def analyze_emails(df, user_email):
 
 
 # ============================================================
-# АНАЛІЗ ЛАНЦЮЖКІВ (threads) – перейменовано з цепочок
+# АНАЛІЗ ЛАНЦЮЖКІВ
 # ============================================================
 
 def build_threads_analysis(df):
@@ -811,7 +811,6 @@ if has_valid_data():
                 "contact_score": "Рейтинг контакту",
                 "days_since_contact": "Днів від останнього контакту",
             }, inplace=True)
-            # Просте пояснення рейтингу (замість формули)
             st.caption("ℹ️ **Рейтинг контакту** – показник, який враховує кількість листів, регулярність спілкування та давність останнього контакту. Чим вищий рейтинг, тим активніший контакт.")
             st.dataframe(
                 contacts_display[["Email", "Ім'я", "Листів", "Частка пошти", "Рейтинг контакту", "Перший контакт", "Останній контакт", "Днів від останнього контакту"]],
@@ -930,7 +929,7 @@ if has_valid_data():
             ).properties(height=300)
             st.altair_chart(chart, use_container_width=True)
 
-    # ========== TAB 6 — ЧАС ВІДПОВІДІ ==========
+    # ========== TAB 6 — ЧАС ВІДПОВІДІ (оновлено з правильним сортуванням) ==========
     with tab_response_time:
         st.subheader("⏱️ Час відповіді")
         if response_df.empty:
@@ -957,13 +956,41 @@ if has_valid_data():
             name_dict = dict(zip(name_map["clean_from"], name_map["sender_name"]))
             contact_response = response_df.groupby("contact_email")["response_time"].agg(["count", "mean", "median"]).reset_index()
             contact_response["Ім'я"] = contact_response["contact_email"].map(name_dict).fillna("")
-            contact_response["Середній час"] = contact_response["mean"].apply(format_timedelta)
-            contact_response["Медіанний час"] = contact_response["median"].apply(format_timedelta)
+            
+            # Текстове представлення часу
+            contact_response["Час відповіді"] = contact_response["mean"].apply(format_timedelta)
+            contact_response["Медіана"] = contact_response["median"].apply(format_timedelta)
+            
+            # Числові значення для сортування (у хвилинах)
+            contact_response["_сорт_середнє"] = (contact_response["mean"].dt.total_seconds() / 60).fillna(0).astype(int)
+            contact_response["_сорт_медіана"] = (contact_response["median"].dt.total_seconds() / 60).fillna(0).astype(int)
+            
             contact_response.rename(columns={"contact_email": "Контакт", "count": "Відповідей"}, inplace=True)
+            
+            # CSS для приховування числових колонок
+            st.markdown(
+                """
+                <style>
+                /* Ховаємо колонки з символом "_" у заголовку */
+                th:has(div:contains("_сорт_")),
+                td[data-testid*="_сорт_"] {
+                    display: none !important;
+                }
+                </style>
+                """,
+                unsafe_allow_html=True
+            )
+            
             st.dataframe(
-                contact_response[["Контакт", "Ім'я", "Відповідей", "Середній час", "Медіанний час"]].sort_values("Відповідей", ascending=False),
+                contact_response[["Контакт", "Ім'я", "Відповідей", "Час відповіді", "Медіана", "_сорт_середнє", "_сорт_медіана"]].sort_values("_сорт_медіана", ascending=True),
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "Час відповіді": st.column_config.Column(width="medium"),
+                    "Медіана": st.column_config.Column(width="medium"),
+                    "_сорт_середнє": st.column_config.Column(width="small", help="Приховано для сортування"),
+                    "_сорт_медіана": st.column_config.Column(width="small", help="Приховано для сортування"),
+                }
             )
 
     # ========== TAB 7 — ДИНАМІКА ==========
@@ -985,7 +1012,7 @@ if has_valid_data():
             daily_display = daily_counts.rename(columns={"date_only": "Дата", "Кількість": "Листів"}).copy()
             st.dataframe(daily_display, use_container_width=True, hide_index=True)
 
-    # ========== TAB 8 — ЛАНЦЮЖКИ (перейменовано) ==========
+    # ========== TAB 8 — ЛАНЦЮЖКИ ==========
     with tab_threads:
         st.subheader("🧵 Аналіз ланцюжків листування")
 
@@ -1006,29 +1033,24 @@ if has_valid_data():
 
             st.divider()
 
-            # Діаграма Парето для розподілу довжини ланцюжків
             st.subheader("📊 Розподіл ланцюжків за довжиною (діаграма Парето)")
             if not thread_analysis["length_dist"].empty:
                 length_df = thread_analysis["length_dist"].sort_values("Довжина")
-                # Обчислюємо кумулятивний відсоток
                 total = length_df["Кількість"].sum()
                 length_df["Кумулятивний %"] = (length_df["Кількість"].cumsum() / total * 100).round(1)
                 
-                # Стовпчики
                 bars = alt.Chart(length_df).mark_bar(color="steelblue").encode(
                     x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
                     y=alt.Y("Кількість:Q", title="Кількість ланцюжків"),
                     tooltip=["Довжина", "Кількість", "Кумулятивний %"]
                 )
                 
-                # Лінія Парето (кумулятивний %)
                 line = alt.Chart(length_df).mark_line(color="red", point=True).encode(
                     x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
                     y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
                     tooltip=["Довжина", "Кумулятивний %"]
                 )
                 
-                # Об'єднуємо
                 chart = (bars + line).resolve_scale(y="independent").properties(height=400)
                 st.altair_chart(chart, use_container_width=True)
 
