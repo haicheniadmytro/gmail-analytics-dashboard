@@ -5,97 +5,109 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 import os
-import pickle
 import json
 from datetime import datetime
 from collections import Counter
 import altair as alt
 import webbrowser
 
+# --- Конфігурація ---
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
+# --- Функція для отримання облікових даних ---
 def get_credentials():
-    creds = None
-    token_file = 'token.pickle'
-
-    if os.path.exists(token_file):
-        with open(token_file, 'rb') as token:
-            creds = pickle.load(token)
-        st.info("✅ Використовую збережений токен.")
-    else:
-        st.warning("⚠️ Токен не знайдено, потрібна авторизація.")
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            st.info("🔄 Оновлюємо прострочений токен...")
+    # Перевіряємо, чи є дійсний токен у session_state
+    if 'creds' in st.session_state and st.session_state['creds'] is not None:
+        creds = st.session_state['creds']
+        if creds.valid:
+            st.sidebar.success("✅ Токен дійсний")
+            return creds
+        elif creds.expired and creds.refresh_token:
+            st.sidebar.info("🔄 Оновлюємо токен...")
             creds.refresh(Request())
+            st.session_state['creds'] = creds
+            return creds
         else:
-            if 'gmail_credentials' in st.secrets:
-                try:
-                    credentials_dict = json.loads(st.secrets['gmail_credentials'])
-                    redirect_uris = credentials_dict.get('installed', {}).get('redirect_uris', [])
-                    if not redirect_uris:
-                        redirect_uris = credentials_dict.get('web', {}).get('redirect_uris', [])
-                    redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
-                    flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES, redirect_uri=redirect_uri)
-                    st.info("🔐 Використовую Secrets.")
-                except Exception as e:
-                    st.error(f"❌ Помилка Secrets: {e}")
-                    st.stop()
-            elif os.path.exists('credentials.json'):
-                with open('credentials.json', 'r') as f:
-                    creds_data = json.load(f)
-                redirect_uris = creds_data.get('installed', {}).get('redirect_uris', [])
-                if not redirect_uris:
-                    redirect_uris = creds_data.get('web', {}).get('redirect_uris', [])
-                redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES, redirect_uri=redirect_uri)
-                st.info("📁 Використовую локальний файл.")
-            else:
-                st.error("❌ Облікові дані не знайдено!")
-                st.stop()
+            st.sidebar.warning("⚠️ Токен недійсний, потрібна повторна авторизація")
+            del st.session_state['creds']
 
-            in_cloud = 'gmail_credentials' in st.secrets
+    st.sidebar.info("🔑 Потрібна авторизація")
 
-            if in_cloud:
-                st.info("🌐 Хмарний режим: введіть код вручну.")
-                auth_url, state = flow.authorization_url(prompt='consent')
-                st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут]({auth_url})")
-                st.markdown("**2. Скопіюйте код з URL (параметр `code=...`) та вставте нижче:**")
-                auth_code = st.text_input("Код авторизації:", type="password")
+    # Отримуємо облікові дані (Secrets або локальний файл)
+    if 'gmail_credentials' in st.secrets:
+        try:
+            credentials_dict = json.loads(st.secrets['gmail_credentials'])
+            # Витягуємо redirect_uri
+            redirect_uris = credentials_dict.get('installed', {}).get('redirect_uris', [])
+            if not redirect_uris:
+                redirect_uris = credentials_dict.get('web', {}).get('redirect_uris', [])
+            redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
+            flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES, redirect_uri=redirect_uri)
+            st.sidebar.info("🔐 Використовую Secrets")
+        except Exception as e:
+            st.sidebar.error(f"❌ Помилка Secrets: {e}")
+            st.stop()
+    elif os.path.exists('credentials.json'):
+        try:
+            with open('credentials.json', 'r') as f:
+                credentials_dict = json.load(f)
+            redirect_uris = credentials_dict.get('installed', {}).get('redirect_uris', [])
+            if not redirect_uris:
+                redirect_uris = credentials_dict.get('web', {}).get('redirect_uris', [])
+            redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES, redirect_uri=redirect_uri)
+            st.sidebar.info("📁 Використовую локальний файл")
+        except Exception as e:
+            st.sidebar.error(f"❌ Помилка читання credentials.json: {e}")
+            st.stop()
+    else:
+        st.sidebar.error("❌ Облікові дані не знайдено!")
+        st.stop()
 
-                if auth_code:
-                    try:
-                        flow.fetch_token(code=auth_code)
-                        creds = flow.credentials
-                        with open(token_file, 'wb') as token:
-                            pickle.dump(creds, token)
-                        st.success("✅ Авторизацію завершено! Перезапускаємо...")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ Помилка обміну коду: {e}")
-                        st.stop()
-                else:
-                    st.warning("⏳ Очікуємо введення коду...")
-                    st.stop()
-            else:
-                st.info("🖥️ Локальний режим: відкриваємо браузер...")
-                try:
-                    webbrowser.open(flow.authorization_url(prompt='consent')[0])
-                except:
-                    pass
-                creds = flow.run_local_server(port=0, open_browser=False)
-                with open(token_file, 'wb') as token:
-                    pickle.dump(creds, token)
-                st.success("✅ Авторизацію завершено!")
+    # Визначаємо середовище
+    in_cloud = 'gmail_credentials' in st.secrets
+
+    if in_cloud:
+        # Хмарний режим: ручне введення коду
+        st.info("🌐 Хмарний режим: введіть код вручну.")
+        auth_url, state = flow.authorization_url(prompt='consent')
+        st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут]({auth_url})")
+        st.markdown("**2. Скопіюйте `code=` з URL та вставте нижче:**")
+        auth_code = st.text_input("Код авторизації:", type="password")
+
+        if auth_code:
+            try:
+                flow.fetch_token(code=auth_code)
+                creds = flow.credentials
+                st.session_state['creds'] = creds
+                st.success("✅ Авторизацію завершено! Тепер натисніть кнопку ще раз.")
                 st.rerun()
+            except Exception as e:
+                st.error(f"❌ Помилка: {e}")
+                st.stop()
+        else:
+            st.warning("⏳ Очікуємо код...")
+            st.stop()
+    else:
+        # Локальний режим: автоматичне відкриття браузера
+        st.info("🖥️ Локальний режим: відкриваємо браузер...")
+        try:
+            webbrowser.open(flow.authorization_url(prompt='consent')[0])
+        except:
+            pass
+        creds = flow.run_local_server(port=0, open_browser=False)
+        st.session_state['creds'] = creds
+        st.success("✅ Авторизацію завершено!")
+        st.rerun()
 
-    return creds
+    return None
 
+# --- Кешована функція для сервісу ---
 @st.cache_resource
 def get_gmail_service(creds):
     return build('gmail', 'v1', credentials=creds)
 
+# --- Функції завантаження та аналізу ---
 def get_email_metadata(service, max_results=500):
     st.info(f"📧 Завантаження до {max_results} листів...")
     results = service.users().messages().list(userId='me', maxResults=max_results).execute()
@@ -143,6 +155,7 @@ def analyze_emails(df):
     df['is_reply'] = df['subject'].str.startswith('Re:', na=False)
     return df
 
+# --- Інтерфейс Streamlit ---
 st.set_page_config(page_title="Gmail Analytics Dashboard", layout="wide")
 st.title("📊 Gmail Analytics Dashboard")
 st.markdown("Аналізуйте свою електронну пошту за допомогою Gmail API")
@@ -150,20 +163,30 @@ st.markdown("Аналізуйте свою електронну пошту за 
 with st.sidebar:
     st.header("⚙️ Налаштування")
     max_emails = st.slider("Кількість листів для аналізу", 50, 1000, 500)
+
     if st.button("🔄 Завантажити дані з Gmail", type="primary"):
-        with st.spinner("Підключення..."):
+        with st.spinner("Підключення до Gmail API..."):
             try:
                 creds = get_credentials()
-                if creds:
+                if creds and creds.valid:
                     service = get_gmail_service(creds)
                     df = get_email_metadata(service, max_results=max_emails)
                     df = analyze_emails(df)
                     st.session_state['data'] = df
                     st.success("✅ Дані завантажено!")
                 else:
-                    st.error("❌ Немає облікових даних.")
+                    st.warning("⚠️ Авторизацію не завершено.")
             except Exception as e:
                 st.error(f"❌ Помилка: {str(e)}")
+
+    st.divider()
+    st.markdown("### 📋 Інструкція")
+    st.markdown("""
+    1. Натисніть кнопку вище.
+    2. Якщо в хмарі — перейдіть за посиланням, скопіюйте `code=` та вставте.
+    3. Після введення коду **натисніть кнопку ще раз**.
+    4. Готово!
+    """)
 
 if 'data' in st.session_state and st.session_state['data'] is not None:
     df = st.session_state['data']
@@ -177,6 +200,7 @@ if 'data' in st.session_state and st.session_state['data'] is not None:
         st.metric("🌐 Найпопулярніший домен", top_domain)
     with col4:
         st.metric("↩️ Відповідей", df['is_reply'].sum())
+
     st.divider()
     tab1, tab2, tab3, tab4 = st.tabs(["📈 Часові тренди", "👥 Відправники", "🏷️ Мітки", "📊 Детальна таблиця"])
     with tab1:
