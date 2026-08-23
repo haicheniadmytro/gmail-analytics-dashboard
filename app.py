@@ -54,46 +54,46 @@ STOP_WORDS = {
     "us",
     "about",
     "if",
-    "page",,
+    "page",
     "my",
     "has",
-    "search",,
+    "search",
     "free",
     "but",
-    "our",,
+    "our",
     "one",
     "other",
     "do",
     "no",
     "information",
     "time",
-    "they",,
+    "they",
     "site",
-    "he",,
+    "he",
     "up",
-    "may",,
-    "what",,
-    "news",,
-    "out",,
-    "use",,
-    "any",,
+    "may",
+    "what",
+    "news",
+    "out",
+    "use",
+    "any",
     "there",
-    "see",,
-    "only",,
-    "so",,
-    "his",,
-    "when",,
-    "contact",,
-    "here",,
-    "business",,
-    "who",,
-    "web",,
-    "also",,
-    "now",,
-    "help",,
-    "get",,
-    "pm",,
-    "am",,
+    "see",
+    "only",
+    "so",
+    "his",
+    "when",
+    "contact",
+    "here",
+    "business",
+    "who",
+    "web",
+    "also",
+    "now",
+    "help",
+    "get",
+    "pm",
+    "am",
     "та",
     "в",
     "і",
@@ -125,7 +125,7 @@ STOP_WORDS = {
     "також",
     "щоб",
     "було",
-    "bути",
+    "бути",
     "є",
     "де",
     "коли",
@@ -398,7 +398,6 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
             inplace=True,
         )
 
-        # Перевпорядкування колонок
         cols_order = [
             "Email",
             "Ім'я",
@@ -495,7 +494,6 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
 
         st.altair_chart(chart_senders, use_container_width=True)
 
-        # Табличний вигляд для зручності
         with st.expander("📋 Переглянути у вигляді таблиці з %"):
             table_display = top_s[["Email", "Кількість", "Відсоток"]].copy()
             table_display["Відсоток"] = (
@@ -512,7 +510,6 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
 
         words_list = []
         for subj in df["subject"].dropna():
-            # Залишаємо тільки букви та цифри
             cleaned_subj = re.sub(r"[^\w\s]", " ", subj.lower())
             tokens = cleaned_subj.split()
             for w in tokens:
@@ -570,17 +567,15 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
         # 2. Середнє навантаження
         num_days = (max_d - min_d).days + 1 if min_d and max_d else 1
         avg_per_day = round(total_count / max(num_days, 1), 1)
-        avg_per_week = round(avg_per_day * 7, 1)
 
         with col_w3:
-            st.metric("📈 Середньо на день / тиждень", f"{avg_per_day} / день")
+            st.metric("📈 Середньо на день", f"{avg_per_day} листів/день")
 
         st.divider()
 
         # 3. Піковий день та місяць
         col_p1, col_p2 = st.columns(2)
 
-        # Піковий день
         daily_counts = (
             df.groupby("date_only").size().reset_index(name="count")
         )
@@ -591,10 +586,9 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
                 st.metric(
                     label=f"Дата: {peak_day_row['date_only']}",
                     value=f"{peak_day_row['count']} листів",
-                    help="День, коли надійшла найбільша кількість листів за весь період",
+                    help="День з найбільшою кількістю листів за обраний період",
                 )
 
-        # Піковий місяць
         monthly_counts = df.groupby("month").size().reset_index(name="count")
         if not monthly_counts.empty:
             peak_month_row = monthly_counts.loc[monthly_counts["count"].idxmax()]
