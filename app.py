@@ -47,13 +47,24 @@ def get_credentials():
                 st.error("❌ Облікові дані не знайдено! Додайте 'gmail_credentials' у Secrets або завантажте 'credentials.json'.")
                 st.stop()
 
+            # --- Визначаємо redirect_uri (беремо перший зі списку або використовуємо http://localhost) ---
+            # Оскільки у нас може бути ключ 'web' або 'installed', беремо той, який є
+            client_config = flow.client_config
+            redirect_uris = client_config.get('redirect_uris', [])
+            if redirect_uris:
+                redirect_uri = redirect_uris[0]
+            else:
+                # Якщо немає, використовуємо стандартний для Desktop app
+                redirect_uri = 'http://localhost'
+
             # --- Визначення середовища: хмара, якщо є Secrets ---
             in_cloud = 'gmail_credentials' in st.secrets
 
             if in_cloud:
                 # ========== РЕЖИМ ХМАРИ (ручне введення коду) ==========
                 st.info("🌐 Ви в хмарному середовищі. Авторизація відбуватиметься вручну.")
-                auth_url, state = flow.authorization_url(prompt='consent')
+                # Генеруємо URL для авторизації з явним redirect_uri
+                auth_url, state = flow.authorization_url(redirect_uri=redirect_uri, prompt='consent')
                 st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут, щоб авторизуватися]({auth_url})")
                 st.markdown("**2. Після входу скопіюйте код із адресного рядка браузера (параметр `code=...`) та вставте його нижче:**")
 
@@ -61,7 +72,8 @@ def get_credentials():
 
                 if auth_code:
                     try:
-                        flow.fetch_token(code=auth_code)
+                        # Обмінюємо код на токен, передаючи той самий redirect_uri
+                        flow.fetch_token(code=auth_code, redirect_uri=redirect_uri)
                         creds = flow.credentials
                         st.success("✅ Авторизацію успішно завершено!")
                     except Exception as e:
@@ -74,9 +86,11 @@ def get_credentials():
                 # ========== ЛОКАЛЬНИЙ РЕЖИМ (автоматичне відкриття браузера) ==========
                 st.info("🖥️ Локальне середовище. Відкриваємо браузер для авторизації...")
                 try:
-                    webbrowser.open(flow.authorization_url()[0])
+                    # Відкриваємо URL з явним redirect_uri
+                    webbrowser.open(flow.authorization_url(redirect_uri=redirect_uri)[0])
                 except:
                     pass
+                # Запускаємо локальний сервер (без відкриття браузера)
                 creds = flow.run_local_server(port=0, open_browser=False)
 
             # Зберігаємо токен для наступних запусків
@@ -85,7 +99,7 @@ def get_credentials():
 
     return creds
 
-# --- Кешована функція для створення сервісу (тільки після отримання creds) ---
+# --- Кешована функція для створення сервісу ---
 @st.cache_resource
 def get_gmail_service(creds):
     """Створює сервіс Gmail API з використанням наданих облікових даних."""
@@ -158,11 +172,8 @@ with st.sidebar:
     if st.button("🔄 Завантажити дані з Gmail", type="primary"):
         with st.spinner("Підключення до Gmail API..."):
             try:
-                # 1. Отримуємо облікові дані (без кешу, бо там віджети)
                 creds = get_credentials()
-                # 2. Будуємо сервіс (кешовано)
                 service = get_gmail_service(creds)
-                # 3. Завантажуємо дані
                 df = get_email_metadata(service, max_results=max_emails)
                 df = analyze_emails(df)
                 st.session_state['data'] = df
