@@ -12,6 +12,129 @@ import streamlit as st
 # ⚠️ Повинно бути НАЙПЕРШОЮ командою Streamlit у файлі
 st.set_page_config(page_title="Gmail Pro Analytics", layout="wide")
 
+# Список стоп-слів для очищення слів у темах листів
+STOP_WORDS = {
+    "re",
+    "fwd",
+    "fw",
+    "the",
+    "to",
+    "and",
+    "a",
+    "of",
+    "in",
+    "for",
+    "is",
+    "on",
+    "that",
+    "by",
+    "this",
+    "with",
+    "i",
+    "you",
+    "it",
+    "not",
+    "or",
+    "be",
+    "are",
+    "from",
+    "at",
+    "as",
+    "your",
+    "all",
+    "have",
+    "new",
+    "more",
+    "an",
+    "was",
+    "we",
+    "will",
+    "home",
+    "can",
+    "us",
+    "about",
+    "if",
+    "page",,
+    "my",
+    "has",
+    "search",,
+    "free",
+    "but",
+    "our",,
+    "one",
+    "other",
+    "do",
+    "no",
+    "information",
+    "time",
+    "they",,
+    "site",
+    "he",,
+    "up",
+    "may",,
+    "what",,
+    "news",,
+    "out",,
+    "use",,
+    "any",,
+    "there",
+    "see",,
+    "only",,
+    "so",,
+    "his",,
+    "when",,
+    "contact",,
+    "here",,
+    "business",,
+    "who",,
+    "web",,
+    "also",,
+    "now",,
+    "help",,
+    "get",,
+    "pm",,
+    "am",,
+    "та",
+    "в",
+    "і",
+    "на",
+    "з",
+    "для",
+    "по",
+    "до",
+    "не",
+    "про",
+    "як",
+    "за",
+    "від",
+    "що",
+    "чи",
+    "це",
+    "а",
+    "при",
+    "або",
+    "у",
+    "я",
+    "ви",
+    "ми",
+    "вони",
+    "його",
+    "її",
+    "їх",
+    "теж",
+    "також",
+    "щоб",
+    "було",
+    "bути",
+    "є",
+    "де",
+    "коли",
+    "то",
+    "лише",
+    "після",
+    "під",
+}
+
 
 # --- 1. Допоміжні функції ---
 def decode_mime_words(header_val):
@@ -147,14 +270,14 @@ def analyze_emails(df):
 # --- 4. Інтерфейс Streamlit ---
 st.title("📊 Gmail Pro Analytics Dashboard")
 
-# Перевірка чи завантажені дані (для автозгортання авторизації)
+# Перевірка чи завантажені дані
 is_data_loaded = (
     "raw_data" in st.session_state and st.session_state["raw_data"] is not None
 )
 
 # Сайдбар налаштувань
 with st.sidebar:
-    # 🔐 Схований блок авторизації (автоматично згортається після завантаження пошти)
+    # 🔐 Схований блок авторизації
     with st.expander("🔑 Авторизація IMAP", expanded=not is_data_loaded):
         user_email = st.text_input("Ваш Email", placeholder="name@domain.com")
         app_password = st.text_input(
@@ -165,7 +288,7 @@ with st.sidebar:
 
     st.divider()
 
-    # Повзунок ліміту (до 100 000 листів)
+    # Повзунок ліміту
     max_emails = st.slider(
         "Кількість останніх листів",
         min_value=500,
@@ -215,10 +338,12 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
     else:
         df = full_df.copy()
 
+    total_count = len(df)
+
     # Загальні метрики
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("📧 Проаналізовано листів", len(df))
+        st.metric("📧 Проаналізовано листів", total_count)
     with col2:
         st.metric("👤 Унікальних відправників", df["clean_from"].nunique())
     with col3:
@@ -227,13 +352,17 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
     st.divider()
 
     # Таби аналітики
-    tab_vip, tab_heatmap, tab_senders, tab_time = st.tabs(
-        [
-            "🌟 Контакти Top-VIP",
-            "🔥 Heatmap (Години × Дні)",
-            "👥 Найпопулярніші адресати",
-            "📅 Тренд за місяцями/роками",
-        ]
+    tab_vip, tab_heatmap, tab_senders, tab_words, tab_workload, tab_time = (
+        st.tabs(
+            [
+                "🌟 Контакти Top-VIP",
+                "🔥 Heatmap (Години × Дні)",
+                "👥 Найпопулярніші адресати",
+                "🔤 Найчастіші слова в темах",
+                "⚖️ Навантаження та Піки",
+                "📅 Тренд за місяцями/роками",
+            ]
+        )
     )
 
     # TAB 1: Top-VIP Контакти
@@ -253,6 +382,10 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
             .sort_values(by="total_emails", ascending=False)
         )
 
+        vip_df["% від Total"] = (
+            (vip_df["total_emails"] / total_count) * 100
+        ).round(2).astype(str) + "%"
+
         vip_df.rename(
             columns={
                 "clean_from": "Email",
@@ -265,15 +398,25 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
             inplace=True,
         )
 
-        st.dataframe(vip_df.head(30), use_container_width=True, hide_index=True)
+        # Перевпорядкування колонок
+        cols_order = [
+            "Email",
+            "Ім'я",
+            "Всього листів",
+            "% від Total",
+            "З них відповідей (Re:)",
+            "Перший лист",
+            "Останній лист",
+        ]
+        st.dataframe(
+            vip_df[cols_order].head(30),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     # TAB 2: Heatmap
     with tab_heatmap:
         st.subheader("🔥 Теплова карта активності (Години × Дні тижня)")
-        st.markdown(
-            "Темніші квадрати показують години з найбільшою кількістю листів."
-        )
-
         clean_hm = df.dropna(subset=["day_num", "hour"]).copy()
         if not clean_hm.empty:
             days_order = [
@@ -321,26 +464,149 @@ if "raw_data" in st.session_state and st.session_state["raw_data"] is not None:
 
             st.altair_chart(heatmap_chart, use_container_width=True)
 
-    # TAB 3: Найпопулярніші адресати
+    # TAB 3: Найпопулярніші адресати (з % від Total)
     with tab_senders:
         st.subheader("👥 Топ-20 Найактивніших Відправників")
+
         top_s = df["clean_from"].value_counts().head(20).reset_index()
         top_s.columns = ["Email", "Кількість"]
+        top_s["Відсоток"] = (top_s["Кількість"] / total_count * 100).round(2)
+        top_s["Label"] = (
+            top_s["Кількість"].astype(str)
+            + " ("
+            + top_s["Відсоток"].astype(str)
+            + "%)"
+        )
 
         chart_senders = (
             alt.Chart(top_s)
             .mark_bar()
             .encode(
-                x=alt.X("Кількість:Q", title="Кількість листів"),
+                x=alt.X(
+                    "Кількість:Q",
+                    title=f"Кількість листів (з {total_count} total)",
+                ),
                 y=alt.Y("Email:N", sort="-x", title="Email відправника"),
                 color=alt.value("#4C78A8"),
-                tooltip=["Email", "Кількість"],
+                tooltip=["Email", "Кількість", "Відсоток"],
             )
             .properties(height=500)
         )
+
         st.altair_chart(chart_senders, use_container_width=True)
 
-    # TAB 4: Тренд за місяцями/роками
+        # Табличний вигляд для зручності
+        with st.expander("📋 Переглянути у вигляді таблиці з %"):
+            table_display = top_s[["Email", "Кількість", "Відсоток"]].copy()
+            table_display["Відсоток"] = (
+                table_display["Відсоток"].astype(str) + "%"
+            )
+            st.dataframe(table_display, use_container_width=True)
+
+    # TAB 4: Найчастіші слова в темах
+    with tab_words:
+        st.subheader("🔤 Топ-25 слів у темах листів")
+        st.markdown(
+            "Аналіз популярних слів (автоматично очищено від службових слів, предлогів та знаків пунктуації)."
+        )
+
+        words_list = []
+        for subj in df["subject"].dropna():
+            # Залишаємо тільки букви та цифри
+            cleaned_subj = re.sub(r"[^\w\s]", " ", subj.lower())
+            tokens = cleaned_subj.split()
+            for w in tokens:
+                if len(w) > 2 and w not in STOP_WORDS and not w.isdigit():
+                    words_list.append(w)
+
+        word_counts = Counter(words_list).most_common(25)
+
+        if word_counts:
+            words_df = pd.DataFrame(word_counts, columns=["Слово", "Частота"])
+
+            words_chart = (
+                alt.Chart(words_df)
+                .mark_bar(color="#F28E2B")
+                .encode(
+                    x=alt.X("Частота:Q", title="Кількість згадувань"),
+                    y=alt.Y("Слово:N", sort="-x", title="Слово у темі"),
+                    tooltip=["Слово", "Частота"],
+                )
+                .properties(height=550)
+            )
+            st.altair_chart(words_chart, use_container_width=True)
+        else:
+            st.info("Не вдалося виділити слова з тем листів.")
+
+    # TAB 5: Навантаження та піки
+    with tab_workload:
+        st.subheader("⚖️ Аналіз навантаження та рекордні піки")
+
+        # 1. Робочі vs Вихідні
+        workdays_count = df[df["day_num"] < 5].shape[0]
+        weekends_count = df[df["day_num"] >= 5].shape[0]
+
+        work_pct = round(
+            (workdays_count / total_count * 100) if total_count else 0, 1
+        )
+        week_pct = round(
+            (weekends_count / total_count * 100) if total_count else 0, 1
+        )
+
+        col_w1, col_w2, col_w3 = st.columns(3)
+        with col_w1:
+            st.metric(
+                "💼 Робочі дні (Пн-Пт)",
+                f"{workdays_count}",
+                delta=f"{work_pct}% від пошти",
+            )
+        with col_w2:
+            st.metric(
+                "☕ Вихідні дні (Сб-Нд)",
+                f"{weekends_count}",
+                delta=f"{week_pct}% від пошти",
+            )
+
+        # 2. Середнє навантаження
+        num_days = (max_d - min_d).days + 1 if min_d and max_d else 1
+        avg_per_day = round(total_count / max(num_days, 1), 1)
+        avg_per_week = round(avg_per_day * 7, 1)
+
+        with col_w3:
+            st.metric("📈 Середньо на день / тиждень", f"{avg_per_day} / день")
+
+        st.divider()
+
+        # 3. Піковий день та місяць
+        col_p1, col_p2 = st.columns(2)
+
+        # Піковий день
+        daily_counts = (
+            df.groupby("date_only").size().reset_index(name="count")
+        )
+        if not daily_counts.empty:
+            peak_day_row = daily_counts.loc[daily_counts["count"].idxmax()]
+            with col_p1:
+                st.subheader("🏆 Піковий День")
+                st.metric(
+                    label=f"Дата: {peak_day_row['date_only']}",
+                    value=f"{peak_day_row['count']} листів",
+                    help="День, коли надійшла найбільша кількість листів за весь період",
+                )
+
+        # Піковий місяць
+        monthly_counts = df.groupby("month").size().reset_index(name="count")
+        if not monthly_counts.empty:
+            peak_month_row = monthly_counts.loc[monthly_counts["count"].idxmax()]
+            with col_p2:
+                st.subheader("📅 Піковий Місяць")
+                st.metric(
+                    label=f"Місяць: {peak_month_row['month']}",
+                    value=f"{peak_month_row['count']} листів",
+                    help="Місяць з найбільшим обсягом пошти",
+                )
+
+    # TAB 6: Тренд за місяцями/роками
     with tab_time:
         st.subheader("📅 Динаміка листів за місяцями")
         clean_m = df.dropna(subset=["month"]).copy()
