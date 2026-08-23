@@ -48,13 +48,11 @@ def get_credentials():
                 st.stop()
 
             # --- Визначаємо redirect_uri (беремо перший зі списку або використовуємо http://localhost) ---
-            # Оскільки у нас може бути ключ 'web' або 'installed', беремо той, який є
             client_config = flow.client_config
             redirect_uris = client_config.get('redirect_uris', [])
             if redirect_uris:
                 redirect_uri = redirect_uris[0]
             else:
-                # Якщо немає, використовуємо стандартний для Desktop app
                 redirect_uri = 'http://localhost'
 
             # --- Визначення середовища: хмара, якщо є Secrets ---
@@ -63,8 +61,8 @@ def get_credentials():
             if in_cloud:
                 # ========== РЕЖИМ ХМАРИ (ручне введення коду) ==========
                 st.info("🌐 Ви в хмарному середовищі. Авторизація відбуватиметься вручну.")
-                # Генеруємо URL для авторизації з явним redirect_uri
-                auth_url, state = flow.authorization_url(redirect_uri=redirect_uri, prompt='consent')
+                # Генеруємо URL для авторизації (redirect_uri береться з конфігурації)
+                auth_url, state = flow.authorization_url(prompt='consent')
                 st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут, щоб авторизуватися]({auth_url})")
                 st.markdown("**2. Після входу скопіюйте код із адресного рядка браузера (параметр `code=...`) та вставте його нижче:**")
 
@@ -72,7 +70,7 @@ def get_credentials():
 
                 if auth_code:
                     try:
-                        # Обмінюємо код на токен, передаючи той самий redirect_uri
+                        # Обмінюємо код на токен, передаючи redirect_uri (він має збігатися з тим, що був використаний у URL)
                         flow.fetch_token(code=auth_code, redirect_uri=redirect_uri)
                         creds = flow.credentials
                         st.success("✅ Авторизацію успішно завершено!")
@@ -86,11 +84,11 @@ def get_credentials():
                 # ========== ЛОКАЛЬНИЙ РЕЖИМ (автоматичне відкриття браузера) ==========
                 st.info("🖥️ Локальне середовище. Відкриваємо браузер для авторизації...")
                 try:
-                    # Відкриваємо URL з явним redirect_uri
-                    webbrowser.open(flow.authorization_url(redirect_uri=redirect_uri)[0])
+                    # Відкриваємо URL без redirect_uri (він береться з конфігурації)
+                    webbrowser.open(flow.authorization_url(prompt='consent')[0])
                 except:
                     pass
-                # Запускаємо локальний сервер (без відкриття браузера)
+                # run_local_server не приймає redirect_uri, він сам його використовує з конфігурації
                 creds = flow.run_local_server(port=0, open_browser=False)
 
             # Зберігаємо токен для наступних запусків
@@ -159,7 +157,6 @@ def analyze_emails(df):
     df['is_reply'] = df['subject'].str.startswith('Re:', na=False)
     return df
 
-
 # --- Інтерфейс Streamlit ---
 st.set_page_config(page_title="Gmail Analytics Dashboard", layout="wide")
 st.title("📊 Gmail Analytics Dashboard")
@@ -190,7 +187,7 @@ with st.sidebar:
     4. Аналізуйте свою пошту!
     """)
 
-# --- Відображення даних (якщо вони вже завантажені) ---
+# --- Відображення даних ---
 if 'data' in st.session_state and st.session_state['data'] is not None:
     df = st.session_state['data']
 
