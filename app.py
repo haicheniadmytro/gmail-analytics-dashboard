@@ -1,9 +1,8 @@
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from email import message_from_bytes
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-import email
 import imaplib
 import re
 
@@ -13,7 +12,7 @@ import streamlit as st
 
 
 # ============================================================
-# CONFIG
+# НАЛАШТУВАННЯ
 # ============================================================
 
 st.set_page_config(
@@ -27,6 +26,11 @@ TIMEZONE = "Europe/Kyiv"
 
 WORK_START = 9
 WORK_END = 18
+
+
+# ============================================================
+# STOP WORDS
+# ============================================================
 
 STOP_WORDS = {
     # English
@@ -47,13 +51,14 @@ STOP_WORDS = {
     "я", "ви", "ми", "вони", "його", "її", "їх", "теж", "також",
     "щоб", "було", "бути", "є", "де", "коли", "то", "лише",
     "після", "під", "але", "ще", "вже", "дуже", "так", "ні",
-    "мені", "вам", "нас", "вас", "цей", "ця", "це", "ці",
-    "можна", "може", "буде", "був", "була", "були",
+    "мені", "вам", "нас", "вас", "цей", "ця", "ці", "можна",
+    "може", "буде", "був", "була", "були", "має", "мають",
+    "якщо", "тому", "тут", "там", "через", "щодо", "між",
 }
 
 
 # ============================================================
-# UI STYLE
+# CSS / UI
 # ============================================================
 
 st.markdown(
@@ -74,13 +79,6 @@ st.markdown(
             font-size: 0.9rem;
         }
 
-        .section-title {
-            font-size: 1.35rem;
-            font-weight: 700;
-            margin-top: 0.5rem;
-            margin-bottom: 0.8rem;
-        }
-
         .insight-card {
             background: rgba(128,128,128,0.08);
             border-radius: 12px;
@@ -88,9 +86,11 @@ st.markdown(
             margin-bottom: 10px;
         }
 
-        .small-muted {
-            color: #777;
-            font-size: 0.85rem;
+        .section-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-top: 0.5rem;
+            margin-bottom: 0.8rem;
         }
     </style>
     """,
@@ -99,23 +99,43 @@ st.markdown(
 
 
 # ============================================================
-# HELPERS
+# ДОПОМІЖНІ ФУНКЦІЇ
 # ============================================================
 
 def decode_mime_words(header_val):
+    """Розшифровує MIME-заголовки листа."""
+
     if not header_val:
         return ""
 
     result = []
 
-    for fragment, encoding in decode_header(header_val):
+    try:
+        fragments = decode_header(header_val)
+    except Exception:
+        return str(header_val)
+
+    for fragment, encoding in fragments:
+
         if isinstance(fragment, bytes):
+
             charset = encoding or "utf-8"
 
             try:
-                result.append(fragment.decode(charset, errors="ignore"))
+                result.append(
+                    fragment.decode(
+                        charset,
+                        errors="ignore",
+                    )
+                )
             except Exception:
-                result.append(fragment.decode("latin1", errors="ignore"))
+                result.append(
+                    fragment.decode(
+                        "latin1",
+                        errors="ignore",
+                    )
+                )
+
         else:
             result.append(str(fragment))
 
@@ -123,6 +143,11 @@ def decode_mime_words(header_val):
 
 
 def parse_date(date_str):
+    """Парсить дату листа."""
+
+    if not date_str:
+        return None
+
     try:
         return parsedate_to_datetime(date_str)
     except Exception:
@@ -130,6 +155,8 @@ def parse_date(date_str):
 
 
 def extract_email_address(value):
+    """Витягує email із From / To."""
+
     if not value:
         return ""
 
@@ -138,15 +165,27 @@ def extract_email_address(value):
         value,
     )
 
-    return match.group(0).lower() if match else value.lower().strip()
+    if match:
+        return match.group(0).lower()
+
+    return value.lower().strip()
 
 
 def extract_name(from_header):
+    """Витягує ім'я відправника."""
+
     if not from_header:
         return ""
 
     if "<" in from_header:
-        name = from_header.split("<")[0].strip().strip('"').strip("'")
+
+        name = (
+            from_header
+            .split("<")[0]
+            .strip()
+            .strip('"')
+            .strip("'")
+        )
 
         if name:
             return name
@@ -156,18 +195,21 @@ def extract_name(from_header):
 
 def normalize_subject(subject):
     """
-    Видаляє Re:, Fwd:, FW: та інші префікси,
-    щоб можна було визначати ланцюжок листування.
+    Нормалізує тему:
+    Re: Договір
+    Fwd: Re: Договір
+    -> договір
     """
 
     if not subject:
         return ""
 
-    subject = subject.lower().strip()
+    subject = str(subject).lower().strip()
 
     previous = None
 
     while previous != subject:
+
         previous = subject
 
         subject = re.sub(
@@ -177,25 +219,33 @@ def normalize_subject(subject):
             flags=re.IGNORECASE,
         )
 
-    subject = re.sub(r"\s+", " ", subject)
+    subject = re.sub(
+        r"\s+",
+        " ",
+        subject,
+    )
 
     return subject.strip()
 
 
 def is_reply_subject(subject):
+    """Визначає Re:/Fwd:/Відповідь."""
+
     if not subject:
         return False
 
     return bool(
         re.match(
             r"^\s*(re|fw|fwd|відповідь)\s*:",
-            subject,
+            str(subject),
             flags=re.IGNORECASE,
         )
     )
 
 
 def calculate_period(period_name):
+    """Розрахунок періоду."""
+
     today = date.today()
 
     if period_name == "Останні 7 днів":
@@ -222,21 +272,38 @@ def calculate_period(period_name):
     return None, today
 
 
-def format_timedelta(td):
-    if pd.isna(td) or td is None:
+def get_period_description(start_date, end_date):
+    """Текстове представлення періоду."""
+
+    if start_date is None:
+        return "Весь доступний період"
+
+    return (
+        f"{start_date.strftime('%d.%m.%Y')} — "
+        f"{end_date.strftime('%d.%m.%Y')}"
+    )
+
+
+def format_timedelta(value):
+    """Красиве представлення timedelta."""
+
+    if value is None or pd.isna(value):
         return "—"
 
-    total_seconds = int(td.total_seconds())
+    total_seconds = int(
+        value.total_seconds()
+    )
 
     if total_seconds < 0:
         return "—"
 
     minutes = total_seconds // 60
-    hours = minutes // 60
-    days = hours // 24
 
+    days = minutes // (24 * 60)
+    minutes = minutes % (24 * 60)
+
+    hours = minutes // 60
     minutes = minutes % 60
-    hours = hours % 24
 
     if days > 0:
         return f"{days} дн. {hours} год."
@@ -247,42 +314,44 @@ def format_timedelta(td):
     return f"{minutes} хв."
 
 
-def get_period_description(start_date, end_date):
-    if start_date is None:
-        return "Весь доступний період"
-
-    return f"{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}"
-
-
 # ============================================================
-# IMAP
+# ПОШУК ПАПКИ НАДІСЛАНИХ
 # ============================================================
 
 def find_sent_folder(mail):
     """
-    Автоматично знаходить папку Sent / Надіслані.
+    Автоматично знаходить папку Gmail для надісланих листів.
     """
 
     try:
+
         status, folders = mail.list()
 
         if status != "OK":
-            return None
+            return "[Gmail]/Sent Mail"
 
         for folder in folders:
+
             if not folder:
                 continue
 
-            decoded = folder.decode(errors="ignore")
+            decoded = folder.decode(
+                "utf-8",
+                errors="ignore",
+            )
 
-            # Gmail позначає папку Sent спеціальним прапором \Sent
+            # Gmail може повертати \Sent
             if r"\Sent" in decoded:
-                match = re.search(r'"([^"]+)"\s*$', decoded)
+
+                # Витягуємо назву папки
+                match = re.search(
+                    r'"([^"]+)"\s*$',
+                    decoded,
+                )
 
                 if match:
                     return match.group(1)
 
-                # запасний варіант
                 if "[Gmail]/Sent Mail" in decoded:
                     return "[Gmail]/Sent Mail"
 
@@ -292,126 +361,216 @@ def find_sent_folder(mail):
         return "[Gmail]/Sent Mail"
 
 
-def search_folder(mail, folder, start_date=None, end_date=None):
+# ============================================================
+# ПОШУК ЛИСТІВ
+# ============================================================
+
+def search_folder(
+    mail,
+    folder,
+    start_date=None,
+    end_date=None,
+):
     """
-    Повертає ID листів у папці за заданим періодом.
+    Шукає листи в конкретній папці.
     """
 
-    status, _ = mail.select(f'"{folder}"')
+    try:
 
-    if status != "OK":
-        return []
+        status, _ = mail.select(
+            f'"{folder}"'
+        )
 
-    if start_date:
-        search_date = start_date.strftime("%d-%b-%Y")
+        if status != "OK":
+            return []
 
-        if end_date:
-            # IMAP SINCE включає дату start_date.
-            # BEFORE має бути наступним днем після end_date.
-            before_date = (end_date + timedelta(days=1)).strftime(
+        if start_date is None:
+
+            status, data = mail.search(
+                None,
+                "ALL",
+            )
+
+        else:
+
+            since_date = start_date.strftime(
                 "%d-%b-%Y"
             )
 
-            status, data = mail.search(
-                None,
-                "SINCE",
-                search_date,
-                "BEFORE",
-                before_date,
-            )
-        else:
-            status, data = mail.search(
-                None,
-                "SINCE",
-                search_date,
-            )
-    else:
-        status, data = mail.search(None, "ALL")
+            if end_date:
 
-    if status != "OK":
+                before_date = (
+                    end_date
+                    + timedelta(days=1)
+                ).strftime(
+                    "%d-%b-%Y"
+                )
+
+                status, data = mail.search(
+                    None,
+                    "SINCE",
+                    since_date,
+                    "BEFORE",
+                    before_date,
+                )
+
+            else:
+
+                status, data = mail.search(
+                    None,
+                    "SINCE",
+                    since_date,
+                )
+
+        if status != "OK":
+            return []
+
+        if not data or not data[0]:
+            return []
+
+        return data[0].split()
+
+    except Exception:
         return []
 
-    return data[0].split()
 
+# ============================================================
+# ЗАВАНТАЖЕННЯ ЗАГОЛОВКІВ
+# ============================================================
 
 def fetch_folder_headers(
     mail,
     folder,
     start_date=None,
     end_date=None,
-    max_results=100000,
+    max_results=20000,
     folder_type="inbox",
 ):
     """
-    Завантажує тільки потрібні заголовки листів.
+    Завантажує тільки заголовки листів.
+
+    ВАЖЛИВО:
+    IMAP команда повинна бути одним рядком.
     """
 
     ids = search_folder(
-        mail,
-        folder,
-        start_date,
-        end_date,
+        mail=mail,
+        folder=folder,
+        start_date=start_date,
+        end_date=end_date,
     )
 
     if not ids:
         return []
 
-    # Останні листи
-    ids = ids[-max_results:]
+    # Беремо останні листи
+    ids = ids[-int(max_results):]
 
+    # Новіші спочатку
     ids.reverse()
 
     result = []
 
     chunk_size = 500
+
     total = len(ids)
 
-    progress_bar = st.progress(0)
+    progress_bar = st.progress(
+        0
+    )
 
-    for i in range(0, total, chunk_size):
-        chunk_ids = ids[i : i + chunk_size]
+    status_text = st.empty()
 
-        ids_str = b",".join(chunk_ids)
+    for i in range(
+        0,
+        total,
+        chunk_size,
+    ):
 
-        status, msg_data = mail.fetch(
-            ids_str,
-            """
-            (BODY.PEEK[
-                HEADER.FIELDS (
-                    DATE
-                    FROM
-                    TO
-                    SUBJECT
-                    MESSAGE-ID
-                    IN-REPLY-TO
-                    REFERENCES
-                )
-            ])
-            """,
+        chunk_ids = ids[
+            i : i + chunk_size
+        ]
+
+        ids_str = b",".join(
+            chunk_ids
         )
+
+        status_text.text(
+            f"Завантаження "
+            f"{i + 1:,}–"
+            f"{min(i + chunk_size, total):,} "
+            f"з {total:,}..."
+        )
+
+        try:
+
+            # НЕ переносимо цей рядок на декілька рядків!
+            status, msg_data = mail.fetch(
+                ids_str,
+                "(BODY.PEEK[HEADER.FIELDS (DATE FROM TO SUBJECT MESSAGE-ID IN-REPLY-TO REFERENCES)])",
+            )
+
+        except Exception as e:
+
+            st.warning(
+                f"⚠️ Не вдалося отримати частину листів: {e}"
+            )
+
+            continue
 
         if status != "OK":
             continue
 
         for response_part in msg_data:
 
-            if not isinstance(response_part, tuple):
+            if not isinstance(
+                response_part,
+                tuple,
+            ):
                 continue
 
             try:
-                msg = message_from_bytes(response_part[1])
+
+                msg = message_from_bytes(
+                    response_part[1]
+                )
 
                 result.append(
                     {
-                        "date": msg.get("Date", ""),
-                        "from": decode_mime_words(msg.get("From", "")),
-                        "to": decode_mime_words(msg.get("To", "")),
-                        "subject": decode_mime_words(
-                            msg.get("Subject", "")
+                        "date": msg.get(
+                            "Date",
+                            "",
                         ),
-                        "message_id": msg.get("Message-ID", ""),
-                        "in_reply_to": msg.get("In-Reply-To", ""),
-                        "references": msg.get("References", ""),
+                        "from": decode_mime_words(
+                            msg.get(
+                                "From",
+                                "",
+                            )
+                        ),
+                        "to": decode_mime_words(
+                            msg.get(
+                                "To",
+                                "",
+                            )
+                        ),
+                        "subject": decode_mime_words(
+                            msg.get(
+                                "Subject",
+                                "",
+                            )
+                        ),
+                        "message_id": msg.get(
+                            "Message-ID",
+                            "",
+                        ),
+                        "in_reply_to": msg.get(
+                            "In-Reply-To",
+                            "",
+                        ),
+                        "references": msg.get(
+                            "References",
+                            "",
+                        ),
                         "folder_type": folder_type,
                     }
                 )
@@ -421,42 +580,60 @@ def fetch_folder_headers(
 
         progress_bar.progress(
             min(
-                (i + chunk_size) / max(total, 1),
+                (i + chunk_size)
+                / max(total, 1),
                 1.0,
             )
         )
 
     progress_bar.empty()
+    status_text.empty()
 
     return result
 
+
+# ============================================================
+# ОСНОВНЕ ЗАВАНТАЖЕННЯ GMAIL
+# ============================================================
 
 def fetch_emails_imap(
     email_user,
     app_password,
     start_date=None,
     end_date=None,
-    max_results=100000,
+    max_results=20000,
 ):
     """
-    Основне завантаження Inbox + Sent.
+    Завантажує Inbox + Sent.
     """
 
-    try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+    mail = None
 
-        clean_password = app_password.replace(" ", "")
+    try:
+
+        mail = imaplib.IMAP4_SSL(
+            "imap.gmail.com"
+        )
+
+        clean_password = (
+            app_password
+            .replace(" ", "")
+            .replace("\n", "")
+            .replace("\r", "")
+        )
 
         mail.login(
-            email_user,
+            email_user.strip(),
             clean_password,
         )
 
         # ----------------------------------------------------
-        # Inbox
+        # INBOX
         # ----------------------------------------------------
 
-        st.info("📥 Завантаження вхідних листів...")
+        st.info(
+            "📥 Завантаження вхідних листів..."
+        )
 
         inbox_data = fetch_folder_headers(
             mail=mail,
@@ -468,13 +645,16 @@ def fetch_emails_imap(
         )
 
         # ----------------------------------------------------
-        # Sent
+        # SENT
         # ----------------------------------------------------
 
-        sent_folder = find_sent_folder(mail)
+        sent_folder = find_sent_folder(
+            mail
+        )
 
         st.info(
-            f"📤 Завантаження надісланих листів: {sent_folder}"
+            f"📤 Завантаження надісланих листів "
+            f"({sent_folder})..."
         )
 
         sent_data = fetch_folder_headers(
@@ -486,53 +666,109 @@ def fetch_emails_imap(
             folder_type="sent",
         )
 
-        mail.logout()
+        # ----------------------------------------------------
+        # LOGOUT
+        # ----------------------------------------------------
 
-        all_data = inbox_data + sent_data
+        try:
+            mail.logout()
+        except Exception:
+            pass
+
+        all_data = (
+            inbox_data
+            + sent_data
+        )
 
         if not all_data:
+
             st.warning(
                 "За обраний період листів не знайдено."
             )
 
             return None
 
-        df = pd.DataFrame(all_data)
+        df = pd.DataFrame(
+            all_data
+        )
 
         st.success(
-            f"✅ Завантажено {len(df):,} листів "
+            "✅ Завантажено "
+            f"{len(df):,} листів "
             f"(вхідні: {len(inbox_data):,}, "
-            f"надіслані: {len(sent_data):,})".replace(",", " ")
+            f"надіслані: {len(sent_data):,})"
+            .replace(",", " ")
         )
 
         return df
 
     except imaplib.IMAP4.error:
+
         st.error(
-            "❌ Помилка авторизації. "
-            "Перевір Email та пароль додатка Gmail."
+            "❌ Помилка авторизації Gmail.\n\n"
+            "Перевір:\n"
+            "• правильність Email;\n"
+            "• пароль додатка Gmail;\n"
+            "• що використовується саме App Password, "
+            "а не звичайний пароль Google."
         )
 
         return None
 
     except Exception as e:
+
         st.error(
             f"❌ Помилка підключення до Gmail: {e}"
         )
 
         return None
 
+    finally:
+
+        if mail is not None:
+
+            try:
+                mail.logout()
+            except Exception:
+                pass
+
 
 # ============================================================
-# DATA ANALYSIS
+# ОБРОБКА DATAFRAME
 # ============================================================
 
-def analyze_emails(df, user_email):
+def analyze_emails(
+    df,
+    user_email,
+):
+    """
+    Підготовка даних для аналітики.
+    """
 
     df = df.copy()
 
     # --------------------------------------------------------
-    # Dates
+    # Переконуємося, що необхідні колонки існують
+    # --------------------------------------------------------
+
+    required_columns = [
+        "date",
+        "from",
+        "to",
+        "subject",
+        "message_id",
+        "in_reply_to",
+        "references",
+        "folder_type",
+    ]
+
+    for column in required_columns:
+
+        if column not in df.columns:
+            df[column] = ""
+
+    # --------------------------------------------------------
+    # Дата
     # --------------------------------------------------------
 
     df["parsed_date"] = pd.to_datetime(
@@ -541,166 +777,277 @@ def analyze_emails(df, user_email):
         errors="coerce",
     )
 
-    # ВАЖЛИВО:
-    # переводимо UTC у Київський час
-    df["parsed_date"] = df["parsed_date"].dt.tz_convert(
-        TIMEZONE
+    # Переводимо UTC → Київ
+    df["parsed_date"] = (
+        df["parsed_date"]
+        .dt.tz_convert(
+            TIMEZONE
+        )
     )
 
-    df["date_only"] = df["parsed_date"].dt.date
-
-    df["year"] = df["parsed_date"].dt.year
-
-    df["month"] = df["parsed_date"].dt.strftime(
-        "%Y-%m"
+    df["date_only"] = (
+        df["parsed_date"].dt.date
     )
 
-    df["hour"] = df["parsed_date"].dt.hour
-
-    df["day_name"] = df["parsed_date"].dt.day_name()
-
-    df["day_num"] = df["parsed_date"].dt.dayofweek
-
-    # --------------------------------------------------------
-    # Sender
-    # --------------------------------------------------------
-
-    df["clean_from"] = df["from"].apply(
-        extract_email_address
+    df["year"] = (
+        df["parsed_date"].dt.year
     )
 
-    df["sender_name"] = df["from"].apply(
-        extract_name
+    df["month"] = (
+        df["parsed_date"]
+        .dt.strftime("%Y-%m")
     )
 
-    # --------------------------------------------------------
-    # Recipient
-    # --------------------------------------------------------
+    df["hour"] = (
+        df["parsed_date"].dt.hour
+    )
 
-    df["clean_to"] = df["to"].apply(
-        extract_email_address
+    df["day_name"] = (
+        df["parsed_date"]
+        .dt.day_name()
+    )
+
+    df["day_num"] = (
+        df["parsed_date"]
+        .dt.dayofweek
     )
 
     # --------------------------------------------------------
-    # Reply detection
+    # Відправник
     # --------------------------------------------------------
 
-    df["normalized_subject"] = df["subject"].apply(
-        normalize_subject
+    df["clean_from"] = (
+        df["from"]
+        .fillna("")
+        .apply(
+            extract_email_address
+        )
     )
 
-    df["is_reply_subject"] = df["subject"].apply(
-        is_reply_subject
-    )
-
-    # --------------------------------------------------------
-    # Working hours
-    # --------------------------------------------------------
-
-    df["is_workday"] = df["day_num"] < 5
-
-    df["is_work_hours"] = (
-        df["is_workday"]
-        & (df["hour"] >= WORK_START)
-        & (df["hour"] < WORK_END)
-    )
-
-    df["is_outside_work_hours"] = ~df["is_work_hours"]
-
-    # --------------------------------------------------------
-    # User's own messages
-    # --------------------------------------------------------
-
-    user_email = user_email.lower().strip()
-
-    df["is_from_user"] = (
-        df["clean_from"] == user_email
+    df["sender_name"] = (
+        df["from"]
+        .fillna("")
+        .apply(
+            extract_name
+        )
     )
 
     # --------------------------------------------------------
-    # Communication direction
+    # Отримувач
     # --------------------------------------------------------
 
-    df["direction"] = df["folder_type"].map(
-        {
-            "inbox": "Вхідний",
-            "sent": "Надісланий",
-        }
+    df["clean_to"] = (
+        df["to"]
+        .fillna("")
+        .apply(
+            extract_email_address
+        )
     )
 
     # --------------------------------------------------------
-    # Message ID cleanup
+    # Тема
+    # --------------------------------------------------------
+
+    df["subject"] = (
+        df["subject"]
+        .fillna("")
+        .astype(str)
+    )
+
+    df["normalized_subject"] = (
+        df["subject"]
+        .apply(
+            normalize_subject
+        )
+    )
+
+    df["is_reply_subject"] = (
+        df["subject"]
+        .apply(
+            is_reply_subject
+        )
+    )
+
+    # --------------------------------------------------------
+    # Message-ID
     # --------------------------------------------------------
 
     df["message_id_clean"] = (
         df["message_id"]
         .fillna("")
+        .astype(str)
         .str.strip()
     )
 
     df["in_reply_to_clean"] = (
         df["in_reply_to"]
         .fillna("")
+        .astype(str)
         .str.strip()
+    )
+
+    df["references_clean"] = (
+        df["references"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    # --------------------------------------------------------
+    # Власна пошта
+    # --------------------------------------------------------
+
+    normalized_user_email = (
+        user_email
+        .strip()
+        .lower()
+    )
+
+    df["is_from_user"] = (
+        df["clean_from"]
+        == normalized_user_email
+    )
+
+    # --------------------------------------------------------
+    # Напрямок
+    # --------------------------------------------------------
+
+    df["direction"] = (
+        df["folder_type"]
+        .map(
+            {
+                "inbox": "Вхідний",
+                "sent": "Надісланий",
+            }
+        )
+        .fillna("Інший")
+    )
+
+    # --------------------------------------------------------
+    # Робочий день
+    # --------------------------------------------------------
+
+    df["is_workday"] = (
+        df["day_num"] < 5
+    )
+
+    # --------------------------------------------------------
+    # Робочий час
+    # --------------------------------------------------------
+
+    df["is_work_hours"] = (
+        df["is_workday"]
+        & (
+            df["hour"]
+            >= WORK_START
+        )
+        & (
+            df["hour"]
+            < WORK_END
+        )
+    )
+
+    df["is_outside_work_hours"] = (
+        ~df["is_work_hours"]
     )
 
     return df
 
 
 # ============================================================
-# RESPONSE TIME
+# ЧАС ВІДПОВІДІ
 # ============================================================
 
 def calculate_response_times(df):
     """
-    Визначає час відповіді на вхідні листи.
+    Розрахунок часу відповіді.
 
-    Логіка:
-    надісланий лист має In-Reply-To,
-    який відповідає Message-ID вхідного листа.
+    Вхідний лист:
+        Message-ID = ABC
+
+    Відповідь:
+        In-Reply-To = ABC
+
+    Тоді:
+        час відповіді =
+        дата відповіді - дата вхідного листа
     """
 
+    if df.empty:
+        return pd.DataFrame()
+
     incoming = df[
-        (df["direction"] == "Вхідний")
-        & (df["message_id_clean"] != "")
+        (
+            df["direction"]
+            == "Вхідний"
+        )
+        & (
+            df["message_id_clean"]
+            != ""
+        )
     ].copy()
 
     outgoing = df[
-        (df["direction"] == "Надісланий")
-        & (df["in_reply_to_clean"] != "")
+        (
+            df["direction"]
+            == "Надісланий"
+        )
+        & (
+            df["in_reply_to_clean"]
+            != ""
+        )
     ].copy()
 
-    if incoming.empty or outgoing.empty:
+    if incoming.empty:
         return pd.DataFrame()
 
-    incoming_lookup = incoming[
-        [
-            "message_id_clean",
-            "parsed_date",
-            "clean_from",
-            "subject",
+    if outgoing.empty:
+        return pd.DataFrame()
+
+    incoming_lookup = (
+        incoming[
+            [
+                "message_id_clean",
+                "parsed_date",
+                "clean_from",
+                "subject",
+            ]
         ]
-    ].rename(
-        columns={
-            "message_id_clean": "parent_message_id",
-            "parsed_date": "received_at",
-            "clean_from": "contact_email",
-            "subject": "original_subject",
-        }
+        .drop_duplicates(
+            "message_id_clean"
+        )
+        .rename(
+            columns={
+                "message_id_clean":
+                    "parent_message_id",
+                "parsed_date":
+                    "received_at",
+                "clean_from":
+                    "contact_email",
+                "subject":
+                    "original_subject",
+            }
+        )
     )
 
-    outgoing_lookup = outgoing[
-        [
-            "in_reply_to_clean",
-            "parsed_date",
-            "subject",
+    outgoing_lookup = (
+        outgoing[
+            [
+                "in_reply_to_clean",
+                "parsed_date",
+                "subject",
+            ]
         ]
-    ].rename(
-        columns={
-            "in_reply_to_clean": "parent_message_id",
-            "parsed_date": "response_at",
-            "subject": "response_subject",
-        }
+        .rename(
+            columns={
+                "in_reply_to_clean":
+                    "parent_message_id",
+                "parsed_date":
+                    "response_at",
+                "subject":
+                    "response_subject",
+            }
+        )
     )
 
     response_df = outgoing_lookup.merge(
@@ -709,66 +1056,92 @@ def calculate_response_times(df):
         how="inner",
     )
 
-    response_df["response_time"] = (
+    if response_df.empty:
+        return response_df
+
+    response_df[
+        "response_time"
+    ] = (
         response_df["response_at"]
         - response_df["received_at"]
     )
 
+    # Тільки логічні відповіді
     response_df = response_df[
-        response_df["response_time"]
+        response_df[
+            "response_time"
+        ]
         >= pd.Timedelta(0)
+    ].copy()
+
+    # Не враховуємо надзвичайно великі значення
+    # у статистиці більше 30 днів
+    response_df = response_df[
+        response_df[
+            "response_time"
+        ]
+        <= pd.Timedelta(days=30)
     ].copy()
 
     return response_df
 
 
 # ============================================================
-# TOPICS
+# АНАЛІЗ ТЕМ
 # ============================================================
 
 def tokenize_subject(subject):
+
     if not subject:
         return []
 
     text = re.sub(
         r"[^\w\s]",
         " ",
-        subject.lower(),
+        str(subject).lower(),
         flags=re.UNICODE,
     )
 
     tokens = text.split()
 
-    return [
-        word
-        for word in tokens
-        if len(word) > 2
-        and word not in STOP_WORDS
-        and not word.isdigit()
-    ]
+    cleaned = []
+
+    for word in tokens:
+
+        if len(word) <= 2:
+            continue
+
+        if word in STOP_WORDS:
+            continue
+
+        if word.isdigit():
+            continue
+
+        cleaned.append(word)
+
+    return cleaned
 
 
 def analyze_topics(df):
+
     words = []
 
-    for subject in df["subject"].dropna():
+    for subject in df[
+        "subject"
+    ].dropna():
+
         words.extend(
-            tokenize_subject(subject)
+            tokenize_subject(
+                subject
+            )
         )
 
-    word_counts = Counter(words)
-
-    # --------------------------------------------------------
-    # Окремі слова
-    # --------------------------------------------------------
-
-    top_words = (
-        word_counts
-        .most_common(30)
+    word_counts = Counter(
+        words
     )
 
     words_df = pd.DataFrame(
-        top_words,
+        word_counts.most_common(30),
         columns=[
             "Слово",
             "Кількість",
@@ -776,51 +1149,67 @@ def analyze_topics(df):
     )
 
     # --------------------------------------------------------
-    # Біграми
+    # Фрази з двох слів
     # --------------------------------------------------------
 
     bigrams = []
 
-    for subject in df["subject"].dropna():
+    for subject in df[
+        "subject"
+    ].dropna():
 
-        tokens = tokenize_subject(subject)
+        tokens = tokenize_subject(
+            subject
+        )
 
-        for i in range(len(tokens) - 1):
+        for i in range(
+            len(tokens) - 1
+        ):
 
-            word1 = tokens[i]
-            word2 = tokens[i + 1]
+            first = tokens[i]
+            second = tokens[i + 1]
 
-            if word1 != word2:
+            if first != second:
+
                 bigrams.append(
-                    f"{word1} {word2}"
+                    f"{first} {second}"
                 )
 
-    bigram_counts = Counter(bigrams)
-
-    top_bigrams = (
-        bigram_counts
-        .most_common(25)
+    bigram_counts = Counter(
+        bigrams
     )
 
     bigrams_df = pd.DataFrame(
-        top_bigrams,
+        bigram_counts.most_common(30),
         columns=[
             "Фраза",
             "Кількість",
         ],
     )
 
-    return words_df, bigrams_df
+    return (
+        words_df,
+        bigrams_df,
+    )
 
 
 # ============================================================
-# CONTACT SCORE
+# РЕЙТИНГ КОНТАКТІВ
 # ============================================================
 
 def build_contact_ranking(df):
 
+    incoming = df[
+        df["direction"]
+        == "Вхідний"
+    ].copy()
+
+    if incoming.empty:
+        return pd.DataFrame()
+
     contacts = (
-        df.groupby(
+        incoming
+        .groupby(
             [
                 "clean_from",
                 "sender_name",
@@ -847,49 +1236,100 @@ def build_contact_ranking(df):
         .reset_index()
     )
 
-    # Вага кількості листів
-    contacts["volume_score"] = (
-        contacts["total_emails"]
-        / max(
-            contacts["total_emails"].max(),
-            1,
-        )
+    # --------------------------------------------------------
+    # Активність
+    # --------------------------------------------------------
+
+    max_volume = max(
+        contacts[
+            "total_emails"
+        ].max(),
+        1,
+    )
+
+    contacts[
+        "volume_score"
+    ] = (
+        contacts[
+            "total_emails"
+        ]
+        / max_volume
         * 50
     )
 
-    # Регулярність
-    contacts["days_active"] = (
-        contacts["last_contact"]
-        - contacts["first_contact"]
+    # --------------------------------------------------------
+    # Тривалість взаємодії
+    # --------------------------------------------------------
+
+    contacts[
+        "days_active"
+    ] = (
+        pd.to_datetime(
+            contacts[
+                "last_contact"
+            ]
+        )
+        - pd.to_datetime(
+            contacts[
+                "first_contact"
+            ]
+        )
     ).dt.days + 1
 
-    contacts["frequency"] = (
-        contacts["total_emails"]
-        / contacts["days_active"].clip(
+    contacts[
+        "frequency"
+    ] = (
+        contacts[
+            "total_emails"
+        ]
+        / contacts[
+            "days_active"
+        ].clip(
             lower=1
         )
     )
 
-    contacts["frequency_score"] = (
-        contacts["frequency"]
-        / max(
-            contacts["frequency"].max(),
-            0.0001,
-        )
+    max_frequency = max(
+        contacts[
+            "frequency"
+        ].max(),
+        0.0001,
+    )
+
+    contacts[
+        "frequency_score"
+    ] = (
+        contacts[
+            "frequency"
+        ]
+        / max_frequency
         * 25
     )
 
-    # Актуальність контакту
-    latest_date = df["date_only"].max()
+    # --------------------------------------------------------
+    # Актуальність
+    # --------------------------------------------------------
 
-    contacts["days_since_contact"] = (
-        latest_date
-        - contacts["last_contact"]
-    ).apply(
-        lambda x: x.days
-    )
+    latest_date = df[
+        "date_only"
+    ].max()
 
-    contacts["recency_score"] = (
+    contacts[
+        "days_since_contact"
+    ] = (
+        pd.to_datetime(
+            latest_date
+        )
+        - pd.to_datetime(
+            contacts[
+                "last_contact"
+            ]
+        )
+    ).dt.days
+
+    contacts[
+        "recency_score"
+    ] = (
         25
         * (
             1
@@ -903,10 +1343,22 @@ def build_contact_ranking(df):
         )
     )
 
-    contacts["contact_score"] = (
-        contacts["volume_score"]
-        + contacts["frequency_score"]
-        + contacts["recency_score"]
+    # --------------------------------------------------------
+    # Фінальний рейтинг
+    # --------------------------------------------------------
+
+    contacts[
+        "contact_score"
+    ] = (
+        contacts[
+            "volume_score"
+        ]
+        + contacts[
+            "frequency_score"
+        ]
+        + contacts[
+            "recency_score"
+        ]
     ).round(1)
 
     contacts = contacts.sort_values(
@@ -918,25 +1370,41 @@ def build_contact_ranking(df):
 
 
 # ============================================================
-# MAIN UI
+# ПЕРЕВІРКА DATAFRAME
 # ============================================================
 
-st.title("📊 Gmail Pro Analytics")
+def has_valid_data():
 
-st.caption(
-    "Аналітика вхідної та вихідної пошти, контактів, "
-    "тем, навантаження та часу відповідей."
-)
+    if (
+        "raw_data"
+        not in st.session_state
+    ):
+        return False
+
+    df = st.session_state[
+        "raw_data"
+    ]
+
+    if df is None:
+        return False
+
+    if not isinstance(
+        df,
+        pd.DataFrame,
+    ):
+        return False
+
+    if df.empty:
+        return False
+
+    return "direction" in df.columns
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-is_data_loaded = (
-    "raw_data" in st.session_state
-    and st.session_state["raw_data"] is not None
-)
+is_data_loaded = has_valid_data()
 
 with st.sidebar:
 
@@ -955,14 +1423,15 @@ with st.sidebar:
             type="password",
             placeholder="abcd efgh ijkl mnop",
             help=(
-                "Використовуйте саме пароль додатка Gmail, "
-                "а не основний пароль Google."
+                "Використовуйте пароль додатка Gmail."
             ),
         )
 
     st.divider()
 
-    st.subheader("🗓️ Період аналізу")
+    st.subheader(
+        "🗓️ Період аналізу"
+    )
 
     period = st.selectbox(
         "Оберіть період",
@@ -983,7 +1452,10 @@ with st.sidebar:
 
         custom_start = st.date_input(
             "Початкова дата",
-            value=date.today() - timedelta(days=90),
+            value=(
+                date.today()
+                - timedelta(days=90)
+            ),
         )
 
         custom_end = st.date_input(
@@ -996,12 +1468,17 @@ with st.sidebar:
 
     else:
 
-        start_date, end_date = calculate_period(
-            period
+        start_date, end_date = (
+            calculate_period(
+                period
+            )
         )
 
     st.caption(
-        f"Період: {get_period_description(start_date, end_date)}"
+        get_period_description(
+            start_date,
+            end_date,
+        )
     )
 
     st.divider()
@@ -1012,10 +1489,6 @@ with st.sidebar:
         max_value=100000,
         value=20000,
         step=1000,
-        help=(
-            "Обмеження застосовується окремо до "
-            "вхідних та надісланих листів."
-        ),
     )
 
     btn_fetch = st.button(
@@ -1026,21 +1499,39 @@ with st.sidebar:
 
 
 # ============================================================
-# LOAD
+# ЗАВАНТАЖЕННЯ
 # ============================================================
 
 if btn_fetch:
 
-    if not user_email or not app_password:
+    # Видаляємо старі дані
+    st.session_state.pop(
+        "raw_data",
+        None,
+    )
+
+    if not user_email:
 
         st.sidebar.error(
-            "⚠️ Введіть Email та пароль додатка."
+            "⚠️ Введіть Email."
         )
 
-    elif start_date and end_date and start_date > end_date:
+    elif not app_password:
 
         st.sidebar.error(
-            "⚠️ Початкова дата не може бути пізніше кінцевої."
+            "⚠️ Введіть пароль додатка."
+        )
+
+    elif (
+        start_date
+        and end_date
+        and start_date > end_date
+    ):
+
+        st.sidebar.error(
+            "⚠️ Початкова дата "
+            "не може бути пізніше "
+            "кінцевої."
         )
 
     else:
@@ -1054,10 +1545,15 @@ if btn_fetch:
                 app_password=app_password,
                 start_date=start_date,
                 end_date=end_date,
-                max_results=max_emails,
+                max_results=int(
+                    max_emails
+                ),
             )
 
-            if raw_df is not None and not raw_df.empty:
+            if (
+                raw_df is not None
+                and not raw_df.empty
+            ):
 
                 analyzed = analyze_emails(
                     raw_df,
@@ -1083,77 +1579,112 @@ if btn_fetch:
 
 
 # ============================================================
-# DASHBOARD
+# ОСНОВНИЙ ДОДАТОК
 # ============================================================
 
-if (
-    "raw_data" in st.session_state
-    and st.session_state["raw_data"] is not None
-):
+if has_valid_data():
 
-    full_df = st.session_state["raw_data"]
+    full_df = st.session_state[
+        "raw_data"
+    ]
 
     df = full_df.copy()
 
     total_count = len(df)
 
     incoming_count = (
-        df["direction"] == "Вхідний"
+        df["direction"]
+        == "Вхідний"
     ).sum()
 
     outgoing_count = (
-        df["direction"] == "Надісланий"
+        df["direction"]
+        == "Надісланий"
     ).sum()
 
     unique_contacts = (
         df["clean_from"]
-        .replace("", pd.NA)
+        .replace(
+            "",
+            pd.NA,
+        )
         .nunique()
     )
 
     outside_hours = (
-        df["is_outside_work_hours"]
-    ).sum()
+        df[
+            "is_outside_work_hours"
+        ]
+        .sum()
+    )
 
-    response_df = calculate_response_times(
-        df
+    response_df = (
+        calculate_response_times(
+            df
+        )
     )
 
     # ========================================================
-    # TOP KPI
+    # HEADER
     # ========================================================
+
+    st.title(
+        "📊 Gmail Pro Analytics"
+    )
 
     st.caption(
-        f"📅 {st.session_state.get('period_description', '')}"
+        "Персональна аналітика "
+        "електронної пошти"
     )
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    st.caption(
+        f"📅 "
+        f"{st.session_state.get(
+            'period_description',
+            ''
+        )}"
+    )
+
+    st.divider()
+
+    # ========================================================
+    # KPI
+    # ========================================================
+
+    col1, col2, col3, col4, col5 = (
+        st.columns(5)
+    )
 
     with col1:
         st.metric(
             "📧 Всього листів",
-            f"{total_count:,}".replace(",", " "),
+            f"{total_count:,}"
+            .replace(",", " "),
         )
 
     with col2:
         st.metric(
             "📥 Вхідні",
-            f"{incoming_count:,}".replace(",", " "),
+            f"{incoming_count:,}"
+            .replace(",", " "),
         )
 
     with col3:
         st.metric(
             "📤 Надіслані",
-            f"{outgoing_count:,}".replace(",", " "),
+            f"{outgoing_count:,}"
+            .replace(",", " "),
         )
 
     with col4:
         st.metric(
             "👥 Контактів",
-            f"{unique_contacts:,}".replace(",", " "),
+            f"{unique_contacts:,}"
+            .replace(",", " "),
         )
 
     with col5:
+
         outside_pct = (
             outside_hours
             / total_count
@@ -1194,16 +1725,14 @@ if (
     )
 
     # ========================================================
-    # DASHBOARD
+    # TAB 1 — ОГЛЯД
     # ========================================================
 
     with tab_dashboard:
 
-        st.subheader("🏠 Загальний огляд")
-
-        # ----------------------------------------------------
-        # Incoming / outgoing
-        # ----------------------------------------------------
+        st.subheader(
+            "🏠 Загальний огляд"
+        )
 
         direction_df = pd.DataFrame(
             {
@@ -1218,8 +1747,10 @@ if (
             }
         )
 
-        chart = (
-            alt.Chart(direction_df)
+        direction_chart = (
+            alt.Chart(
+                direction_df
+            )
             .mark_bar()
             .encode(
                 x=alt.X(
@@ -1228,7 +1759,7 @@ if (
                 ),
                 y=alt.Y(
                     "Кількість:Q",
-                    title="Кількість листів",
+                    title="Листів",
                 ),
                 tooltip=[
                     "Тип",
@@ -1241,18 +1772,18 @@ if (
         )
 
         st.altair_chart(
-            chart,
+            direction_chart,
             use_container_width=True,
         )
 
-        # ----------------------------------------------------
-        # Insights
-        # ----------------------------------------------------
-
-        st.subheader("💡 Основні інсайти")
+        st.subheader(
+            "💡 Основні інсайти"
+        )
 
         daily = (
-            df.groupby("date_only")
+            df.groupby(
+                "date_only"
+            )
             .size()
         )
 
@@ -1274,16 +1805,17 @@ if (
 
         if not df.empty:
 
-            peak_hour = (
+            hour_counts = (
                 df["hour"]
                 .value_counts()
-                .idxmax()
+            )
+
+            peak_hour = (
+                hour_counts.idxmax()
             )
 
             peak_hour_count = (
-                df["hour"]
-                .value_counts()
-                .max()
+                hour_counts.max()
             )
 
             st.markdown(
@@ -1312,8 +1844,8 @@ if (
             st.markdown(
                 f"""
                 <div class="insight-card">
-                ☕ <b>Пошта у вихідні:</b>
-                {weekend_count} листів
+                ☕ <b>Листи у вихідні:</b>
+                {weekend_count}
                 ({weekend_pct:.1f}%).
                 </div>
                 """,
@@ -1332,14 +1864,16 @@ if (
                 f"""
                 <div class="insight-card">
                 ⏱️ <b>Медіанний час відповіді:</b>
-                {format_timedelta(median_response)}.
+                {format_timedelta(
+                    median_response
+                )}.
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
 
     # ========================================================
-    # CONTACTS
+    # TAB 2 — КОНТАКТИ
     # ========================================================
 
     with tab_contacts:
@@ -1348,52 +1882,68 @@ if (
             "🌟 Найактивніші контакти"
         )
 
-        contacts = build_contact_ranking(
-            df
+        contacts = (
+            build_contact_ranking(
+                df
+            )
         )
 
-        contacts_display = contacts.head(
-            30
-        ).copy()
+        if contacts.empty:
 
-        contacts_display["Частка пошти"] = (
+            st.info(
+                "Немає даних про вхідні контакти."
+            )
+
+        else:
+
+            contacts_display = (
+                contacts.head(30)
+                .copy()
+            )
+
             contacts_display[
-                "total_emails"
-            ]
-            / total_count
-            * 100
-        ).round(1)
+                "Частка пошти"
+            ] = (
+                contacts_display[
+                    "total_emails"
+                ]
+                / total_count
+                * 100
+            ).round(1)
 
-        contacts_display.rename(
-            columns={
-                "clean_from": "Email",
-                "sender_name": "Ім'я",
-                "total_emails": "Листів",
-                "first_contact": "Перший контакт",
-                "last_contact": "Останній контакт",
-                "outside_hours": "Поза робочим часом",
-                "contact_score": "Рейтинг контакту",
-                "days_since_contact": "Днів від останнього контакту",
-            },
-            inplace=True,
-        )
+            contacts_display.rename(
+                columns={
+                    "clean_from": "Email",
+                    "sender_name": "Ім'я",
+                    "total_emails": "Листів",
+                    "first_contact":
+                        "Перший контакт",
+                    "last_contact":
+                        "Останній контакт",
+                    "contact_score":
+                        "Рейтинг контакту",
+                    "days_since_contact":
+                        "Днів від останнього контакту",
+                },
+                inplace=True,
+            )
 
-        cols = [
-            "Email",
-            "Ім'я",
-            "Листів",
-            "Частка пошти",
-            "Рейтинг контакту",
-            "Перший контакт",
-            "Останній контакт",
-            "Днів від останнього контакту",
-        ]
-
-        st.dataframe(
-            contacts_display[cols],
-            use_container_width=True,
-            hide_index=True,
-        )
+            st.dataframe(
+                contacts_display[
+                    [
+                        "Email",
+                        "Ім'я",
+                        "Листів",
+                        "Частка пошти",
+                        "Рейтинг контакту",
+                        "Перший контакт",
+                        "Останній контакт",
+                        "Днів від останнього контакту",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
         st.subheader(
             "👥 Найактивніші відправники"
@@ -1409,20 +1959,22 @@ if (
             .reset_index()
         )
 
-        sender_df.columns = [
-            "Email",
-            "Кількість",
-        ]
-
         if not sender_df.empty:
 
-            chart = (
-                alt.Chart(sender_df)
+            sender_df.columns = [
+                "Email",
+                "Кількість",
+            ]
+
+            sender_chart = (
+                alt.Chart(
+                    sender_df
+                )
                 .mark_bar()
                 .encode(
                     x=alt.X(
                         "Кількість:Q",
-                        title="Кількість листів",
+                        title="Листів",
                     ),
                     y=alt.Y(
                         "Email:N",
@@ -1440,18 +1992,18 @@ if (
             )
 
             st.altair_chart(
-                chart,
+                sender_chart,
                 use_container_width=True,
             )
 
     # ========================================================
-    # ACTIVITY
+    # TAB 3 — АКТИВНІСТЬ
     # ========================================================
 
     with tab_activity:
 
         st.subheader(
-            "🔥 Теплова карта активності"
+            "🔥 Активність за днями та годинами"
         )
 
         clean_hm = df.dropna(
@@ -1473,9 +2025,14 @@ if (
                 6: "7. Неділя",
             }
 
-            clean_hm["День"] = (
-                clean_hm["day_num"]
-                .map(day_map)
+            clean_hm[
+                "День"
+            ] = (
+                clean_hm[
+                    "day_num"
+                ].map(
+                    day_map
+                )
             )
 
             heatmap_data = (
@@ -1503,15 +2060,9 @@ if (
                     ),
                     y=alt.Y(
                         "День:O",
-                        sort=[
-                            "1. Понеділок",
-                            "2. Вівторок",
-                            "3. Середа",
-                            "4. Четвер",
-                            "5. П'ятниця",
-                            "6. Субота",
-                            "7. Неділя",
-                        ],
+                        sort=list(
+                            day_map.values()
+                        ),
                         title="День",
                     ),
                     color=alt.Color(
@@ -1537,23 +2088,25 @@ if (
                 use_container_width=True,
             )
 
-        # ----------------------------------------------------
-        # Work hours
-        # ----------------------------------------------------
-
         st.subheader(
             "🕐 Робочий та неробочий час"
         )
 
         work_count = (
             df["is_work_hours"]
-        ).sum()
+            .sum()
+        )
 
         outside_count = (
-            df["is_outside_work_hours"]
-        ).sum()
+            df[
+                "is_outside_work_hours"
+            ]
+            .sum()
+        )
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = (
+            st.columns(3)
+        )
 
         with c1:
             st.metric(
@@ -1568,6 +2121,7 @@ if (
             )
 
         with c3:
+
             pct = (
                 outside_count
                 / total_count
@@ -1582,7 +2136,7 @@ if (
             )
 
     # ========================================================
-    # TOPICS
+    # TAB 4 — ТЕМИ
     # ========================================================
 
     with tab_topics:
@@ -1592,10 +2146,14 @@ if (
         )
 
         words_df, bigrams_df = (
-            analyze_topics(df)
+            analyze_topics(
+                df
+            )
         )
 
-        col1, col2 = st.columns(2)
+        col1, col2 = (
+            st.columns(2)
+        )
 
         with col1:
 
@@ -1606,11 +2164,14 @@ if (
             if not words_df.empty:
 
                 chart = (
-                    alt.Chart(words_df.head(20))
+                    alt.Chart(
+                        words_df.head(20)
+                    )
                     .mark_bar()
                     .encode(
                         x=alt.X(
-                            "Кількість:Q"
+                            "Кількість:Q",
+                            title="Згадувань",
                         ),
                         y=alt.Y(
                             "Слово:N",
@@ -1631,6 +2192,12 @@ if (
                     use_container_width=True,
                 )
 
+            else:
+
+                st.info(
+                    "Недостатньо даних."
+                )
+
         with col2:
 
             st.markdown(
@@ -1646,7 +2213,8 @@ if (
                     .mark_bar()
                     .encode(
                         x=alt.X(
-                            "Кількість:Q"
+                            "Кількість:Q",
+                            title="Згадувань",
                         ),
                         y=alt.Y(
                             "Фраза:N",
@@ -1667,24 +2235,28 @@ if (
                     use_container_width=True,
                 )
 
-        st.subheader(
-            "🔁 Листи-відповіді"
-        )
+            else:
 
-        reply_by_subject = (
+                st.info(
+                    "Недостатньо даних."
+                )
+
+        st.divider()
+
+        reply_count = (
             df[
-                df["is_reply_subject"]
+                "is_reply_subject"
             ]
-            .shape[0]
+            .sum()
         )
 
         st.metric(
-            "Листів із позначкою відповіді",
-            reply_by_subject,
+            "↩️ Листів із позначкою відповіді",
+            reply_count,
         )
 
     # ========================================================
-    # PRODUCTIVITY
+    # TAB 5 — ПРОДУКТИВНІСТЬ
     # ========================================================
 
     with tab_productivity:
@@ -1693,34 +2265,44 @@ if (
             "⚖️ Email Productivity"
         )
 
-        workdays = (
+        unique_days = (
+            df["date_only"]
+            .nunique()
+        )
+
+        workday_df = df[
             df["day_num"] < 5
-        ).sum()
+        ]
 
-        weekends = (
-            df["day_num"] >= 5
-        ).sum()
+        workday_count = len(
+            workday_df
+        )
 
-        num_days = (
-            df["date_only"].nunique()
+        workday_unique_days = (
+            workday_df[
+                "date_only"
+            ].nunique()
         )
 
         avg_per_day = (
             total_count
-            / max(num_days, 1)
-        )
-
-        avg_workday = (
-            workdays
             / max(
-                df[
-                    df["day_num"] < 5
-                ]["date_only"].nunique(),
+                unique_days,
                 1,
             )
         )
 
-        c1, c2, c3, c4 = st.columns(4)
+        avg_workday = (
+            workday_count
+            / max(
+                workday_unique_days,
+                1,
+            )
+        )
+
+        c1, c2, c3, c4 = (
+            st.columns(4)
+        )
 
         with c1:
             st.metric(
@@ -1748,9 +2330,9 @@ if (
 
         st.divider()
 
-        # ----------------------------------------------------
-        # Workday / weekend
-        # ----------------------------------------------------
+        st.subheader(
+            "📊 Робочі дні vs вихідні"
+        )
 
         productivity_df = pd.DataFrame(
             {
@@ -1759,8 +2341,11 @@ if (
                     "Вихідні",
                 ],
                 "Кількість": [
-                    workdays,
-                    weekends,
+                    workday_count,
+                    (
+                        df["day_num"]
+                        >= 5
+                    ).sum(),
                 ],
             }
         )
@@ -1794,19 +2379,19 @@ if (
             use_container_width=True,
         )
 
-        # ----------------------------------------------------
-        # Outside work hours by direction
-        # ----------------------------------------------------
-
         st.subheader(
             "🌙 Пошта поза робочим часом"
         )
 
         outside_direction = (
             df[
-                df["is_outside_work_hours"]
+                df[
+                    "is_outside_work_hours"
+                ]
             ]
-            .groupby("direction")
+            .groupby(
+                "direction"
+            )
             .size()
             .reset_index(
                 name="Кількість"
@@ -1826,7 +2411,8 @@ if (
                         title=None,
                     ),
                     y=alt.Y(
-                        "Кількість:Q"
+                        "Кількість:Q",
+                        title="Листів",
                     ),
                     tooltip=[
                         "direction",
@@ -1844,7 +2430,7 @@ if (
             )
 
     # ========================================================
-    # RESPONSE TIME
+    # TAB 6 — ЧАС ВІДПОВІДІ
     # ========================================================
 
     with tab_response:
@@ -1856,9 +2442,13 @@ if (
         if response_df.empty:
 
             st.info(
-                "Не вдалося знайти достатньо "
-                "даних для розрахунку часу відповіді. "
-                "Для цього потрібні коректні заголовки "
+                "Не вдалося знайти листи, "
+                "для яких можна достовірно "
+                "визначити час відповіді."
+            )
+
+            st.caption(
+                "Для цього Gmail має передавати "
                 "Message-ID та In-Reply-To."
             )
 
@@ -1888,7 +2478,9 @@ if (
                 ].max()
             )
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4 = (
+                st.columns(4)
+            )
 
             with c1:
                 st.metric(
@@ -1932,7 +2524,9 @@ if (
                 response_df
                 .groupby(
                     "contact_email"
-                )["response_time"]
+                )[
+                    "response_time"
+                ]
                 .agg(
                     [
                         "count",
@@ -1945,24 +2539,32 @@ if (
 
             contact_response[
                 "Середній час"
-            ] = contact_response[
-                "mean"
-            ].apply(
-                format_timedelta
+            ] = (
+                contact_response[
+                    "mean"
+                ]
+                .apply(
+                    format_timedelta
+                )
             )
 
             contact_response[
                 "Медіанний час"
-            ] = contact_response[
-                "median"
-            ].apply(
-                format_timedelta
+            ] = (
+                contact_response[
+                    "median"
+                ]
+                .apply(
+                    format_timedelta
+                )
             )
 
             contact_response.rename(
                 columns={
-                    "contact_email": "Контакт",
-                    "count": "Відповідей",
+                    "contact_email":
+                        "Контакт",
+                    "count":
+                        "Відповідей",
                 },
                 inplace=True,
             )
@@ -1984,7 +2586,7 @@ if (
             )
 
     # ========================================================
-    # TRENDS
+    # TAB 7 — ДИНАМІКА
     # ========================================================
 
     with tab_trends:
@@ -2022,7 +2624,7 @@ if (
                     ),
                     y=alt.Y(
                         "Кількість:Q",
-                        title="Кількість листів",
+                        title="Листів",
                     ),
                     color=alt.Color(
                         "direction:N",
@@ -2045,7 +2647,7 @@ if (
             )
 
         st.subheader(
-            "🏆 Пікові періоди"
+            "🏆 Найбільш завантажені дні"
         )
 
         daily_counts = (
@@ -2060,21 +2662,22 @@ if (
                 "Кількість",
                 ascending=False,
             )
+            .head(10)
         )
 
         if not daily_counts.empty:
 
             daily_display = (
-                daily_counts.head(10)
+                daily_counts
+                .rename(
+                    columns={
+                        "date_only":
+                            "Дата",
+                        "Кількість":
+                            "Листів",
+                    }
+                )
                 .copy()
-            )
-
-            daily_display.rename(
-                columns={
-                    "date_only": "Дата",
-                    "Кількість": "Листів",
-                },
-                inplace=True,
             )
 
             st.dataframe(
@@ -2084,6 +2687,10 @@ if (
             )
 
 else:
+
+    st.title(
+        "📊 Gmail Pro Analytics"
+    )
 
     st.info(
         "👈 Відкрийте «Авторизація Gmail», "
