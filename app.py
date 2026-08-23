@@ -1,14 +1,12 @@
 import json
 import os
-import webbrowser
 from collections import Counter
 from datetime import datetime
-from urllib.parse import parse_qs, urlparse
 
 import altair as alt
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 import pandas as pd
 import streamlit as st
@@ -17,30 +15,9 @@ import streamlit as st
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
 
-# --- Очищення та парсинг коду авторизації ---
-def clean_auth_code(raw_code: str) -> str:
-    """Витягує чистий код авторизації, навіть якщо вставили повне посилання або префікс code="""
-    if not raw_code:
-        return ""
-    code = raw_code.strip()
-
-    if "code=" in code or "?" in code:
-        try:
-            parsed = urlparse(code)
-            qs = parse_qs(parsed.query)
-            if "code" in qs:
-                return qs["code"][0]
-        except Exception:
-            pass
-
-        if "code=" in code:
-            code = code.split("code=")[-1].split("&")[0]
-
-    return code.strip()
-
-
-# --- Функція для отримання облікових даних ---
+# --- Функція авторизації через Redirect URL ---
 def get_credentials():
+    # 1. Перевірка наявного токена у сесії
     if 'creds' in st.session_state and st.session_state['creds'] is not None:
         creds = st.session_state['creds']
         if creds.valid:
@@ -55,8 +32,7 @@ def get_credentials():
             except Exception:
                 del st.session_state['creds']
 
-    st.sidebar.info("🔑 Потрібна авторизація")
-
+    # 2. Завантаження конфігурації Google API
     credentials_dict = None
     if 'gmail_credentials' in st.secrets:
         try:
@@ -75,64 +51,45 @@ def get_credentials():
         st.sidebar.error("❌ Облікові дані не знайдено!")
         return None
 
-    redirect_uris = credentials_dict.get('installed', {}).get(
-        'redirect_uris', []
+    # 3. Визначення URL перенаправлення (Redirect URI)
+    # За замовчуванням для локальної розробки: http://localhost:8501/
+    redirect_uri = st.secrets.get("REDIRECT_URI", "http://localhost:8501/")
+
+    flow = Flow.from_client_config(
+        credentials_dict, scopes=SCOPES, redirect_uri=redirect_uri
     )
-    if not redirect_uris:
-        redirect_uris = credentials_dict.get('web', {}).get('redirect_uris', [])
-    redirect_uri = redirect_uris[0] if redirect_uris else 'http://localhost'
 
-    flow = InstalledAppFlow.from_client_config(
-        credentials_dict, SCOPES, redirect_uri=redirect_uri
-    )
-    in_cloud = 'gmail_credentials' in st.secrets
+    # 4. Перевіряємо, чи повернула Google код авторизації в URL адресі
+    auth_code = st.query_params.get("code")
 
-    if in_cloud:
-        st.sidebar.info("🌐 Хмарний режим: введіть код вручну.")
-        auth_url, _ = flow.authorization_url(prompt='consent')
-        st.sidebar.markdown(
-            f"**1. Перейдіть за посиланням:** [Авторизуватися]({auth_url})"
-        )
-
-        raw_auth_code = st.sidebar.text_input(
-            "2. Скопіюйте code= або весь URL та вставте нижче:",
-            type="password",
-            key="auth_code_input",
-        )
-
-        if raw_auth_code:
-            auth_code = clean_auth_code(raw_auth_code)
-            try:
-                flow.fetch_token(code=auth_code)
-                st.session_state['creds'] = flow.credentials
-                st.sidebar.success("✅ Авторизацію завершено!")
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(
-                    f"❌ Помилка авторизації: {e}\n\nЗгенеруйте нове посилання та спробуйте ще раз."
-                )
-    else:
-        st.sidebar.info("🖥️ Локальний режим")
-        if st.sidebar.button("🔑 Увійти через браузер"):
-            try:
-                webbrowser.open(flow.authorization_url(prompt='consent')[0])
-            except Exception:
-                pass
-            creds = flow.run_local_server(port=0, open_browser=False)
-            st.session_state['creds'] = creds
-            st.sidebar.success("✅ Авторизацію завершено!")
+    if auth_code:
+        try:
+            flow.fetch_token(code=auth_code)
+            st.session_state['creds'] = flow.credentials
+            st.query_params.clear()  # Очищаємо URL від коду
+            st.sidebar.success("✅ Успішна авторизація!")
             st.rerun()
+        except Exception as e:
+            st.sidebar.error(f"❌ Помилка отримання токена: {e}")
+            st.query_params.clear()
+            return None
 
+    # 5. Якщо не авторизовано — показуємо кнопку входу
+    auth_url, _ = flow.authorization_url(
+        prompt='consent', access_type='offline'
+    )
+    st.sidebar.info("🔑 Потрібна авторизація")
+    st.sidebar.link_button("🌐 Увійти через Google", auth_url, type="primary")
     return None
 
 
-# --- Кешована функція для сервісу ---
+# --- Кешована функція для сервісу Gmail ---
 @st.cache_resource
 def get_gmail_service(creds):
     return build('gmail', 'v1', credentials=creds)
 
 
-# --- Функції завантаження та аналізу ---
+# --- Завантаження та обробка даних ---
 def get_email_metadata(service, max_results=500):
     st.info(f"📧 Завантаження до {max_results} листів...")
     results = (
@@ -210,10 +167,8 @@ with st.sidebar:
     st.header("⚙️ Налаштування")
     max_emails = st.slider("Кількість листів для аналізу", 50, 1000, 500)
 
-    # Авторизація виконується окремо від обробки кнопки
     creds = get_credentials()
 
-    # Кнопка доступна тільки після підтвердження токена
     if creds and creds.valid:
         if st.button("🔄 Завантажити дані з Gmail", type="primary"):
             with st.spinner("Підключення до Gmail API..."):
@@ -226,15 +181,7 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"❌ Помилка: {str(e)}")
 
-    st.divider()
-    st.markdown("### 📋 Інструкція")
-    st.markdown("""
-    1. Перейдіть за посиланням у сайдбарі для входу в Google.
-    2. Скопіюйте отриманий `code=` або всю адресу сторінки та вставте у поле.
-    3. Дочекайтеся появи статусу **✅ Токен дійсний**.
-    4. Натисніть **Завантажити дані з Gmail**.
-    """)
-
+# --- Відображення результатів ---
 if 'data' in st.session_state and st.session_state['data'] is not None:
     df = st.session_state['data']
     col1, col2, col3, col4 = st.columns(4)
