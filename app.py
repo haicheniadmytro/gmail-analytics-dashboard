@@ -10,11 +10,13 @@ import json
 from datetime import datetime
 from collections import Counter
 import altair as alt
+import webbrowser
+import urllib.parse
 
 # --- Конфігурація ---
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-# --- Функція авторизації (працює з Secrets і локальним файлом) ---
+# --- Функція авторизації (універсальна) ---
 @st.cache_resource
 def get_gmail_service():
     creds = None
@@ -28,7 +30,7 @@ def get_gmail_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            # --- Спроба 1: взяти облікові дані з Streamlit Secrets ---
+            # --- Отримуємо облікові дані ---
             if 'gmail_credentials' in st.secrets:
                 try:
                     credentials_dict = json.loads(st.secrets['gmail_credentials'])
@@ -37,22 +39,58 @@ def get_gmail_service():
                 except Exception as e:
                     st.error(f"❌ Помилка парсингу Secrets: {e}")
                     st.stop()
-            # --- Спроба 2: взяти локальний файл (для розробки) ---
             elif os.path.exists('credentials.json'):
                 flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
                 st.info("📁 Використовую локальний файл credentials.json")
             else:
-                st.error("❌ Облікові дані не знайдено! Додайте 'gmail_credentials' у Secrets або завантажте 'credentials.json'.")
+                st.error("❌ Облікові дані не знайдено!")
                 st.stop()
             
-            creds = flow.run_local_server(port=0)
+            # --- Визначаємо, чи ми в хмарі (немає графічного середовища) ---
+            in_cloud = not os.path.exists('/.dockerenv') and not os.path.exists('/proc/self/cgroup')  # проста перевірка
+            
+            if in_cloud:
+                # --- РЕЖИМ ХМАРИ: ручне введення коду ---
+                st.info("🌐 Ви в хмарному середовищі. Авторизація відбуватиметься вручну.")
+                # Створюємо URL для авторизації
+                auth_url, state = flow.authorization_url(prompt='consent')
+                st.markdown(f"**1. Перейдіть за посиланням:** [Натисніть тут, щоб авторизуватися]({auth_url})")
+                st.markdown("**2. Після входу скопіюйте код із адресного рядка браузера (параметр `code=...`) та вставте його нижче:**")
+                
+                # Поле для введення коду
+                auth_code = st.text_input("Введіть код авторизації:", type="password")
+                
+                if auth_code:
+                    try:
+                        # Обмінюємо код на токен
+                        flow.fetch_token(code=auth_code)
+                        creds = flow.credentials
+                        st.success("✅ Авторизацію успішно завершено!")
+                    except Exception as e:
+                        st.error(f"❌ Помилка обміну коду на токен: {e}")
+                        st.stop()
+                else:
+                    st.warning("⏳ Очікуємо введення коду...")
+                    st.stop()
+            
+            else:
+                # --- РЕЖИМ ЛОКАЛЬНИЙ: автоматичне відкриття браузера ---
+                st.info("🖥️ Локальне середовище. Відкриваємо браузер для авторизації...")
+                try:
+                    # Спроба відкрити браузер автоматично
+                    webbrowser.open(flow.authorization_url()[0])
+                except:
+                    pass
+                # Запускаємо локальний сервер для отримання коду
+                creds = flow.run_local_server(port=0, open_browser=False)
         
+        # Зберігаємо токен для наступних запусків
         with open(token_file, 'wb') as token:
             pickle.dump(creds, token)
     
     return build('gmail', 'v1', credentials=creds)
 
-# --- Функції завантаження та аналізу даних ---
+# --- Функції завантаження та аналізу даних (без змін) ---
 def get_email_metadata(service, max_results=500):
     st.info(f"📧 Завантаження метаданих до {max_results} листів...")
     results = service.users().messages().list(userId='me', maxResults=max_results).execute()
@@ -124,15 +162,13 @@ with st.sidebar:
                 st.success("✅ Дані завантажено успішно!")
             except Exception as e:
                 st.error(f"❌ Помилка: {str(e)}")
-                if "credentials" in str(e).lower():
-                    st.info("Переконайтеся, що файл 'credentials.json' додано до Secrets або знаходиться в корені.")
     
     st.divider()
     st.markdown("### 📋 Інструкція")
     st.markdown("""
-    1. Отримайте `credentials.json` у Google Cloud Console
-    2. Додайте його в Secrets (для хмари) або завантажте локально
-    3. Натисніть кнопку вище для завантаження даних
+    1. Натисніть кнопку вище.
+    2. Якщо ви в хмарі — перейдіть за посиланням, скопіюйте код та вставте його.
+    3. Якщо локально — браузер відкриється автоматично.
     4. Аналізуйте свою пошту!
     """)
 
