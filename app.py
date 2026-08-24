@@ -793,7 +793,7 @@ if has_valid_data():
             median_response = response_df["response_time"].median()
             st.markdown(f"<div class='insight-card'>⏱️ <b>Медіанний час відповіді:</b> {format_timedelta(median_response)}.</div>", unsafe_allow_html=True)
 
-    # ========== TAB 2 — КОНТАКТИ ==========
+    # ========== TAB 2 — КОНТАКТИ (оновлено) ==========
     with tab_contacts:
         st.subheader("🌟 Найактивніші контакти")
         contacts = build_contact_ranking(df)
@@ -821,16 +821,39 @@ if has_valid_data():
                 }
             )
 
-        st.subheader("👥 Найактивніші відправники")
-        sender_df = df[df["direction"] == "Вхідний"]["clean_from"].value_counts().head(20).reset_index()
-        if not sender_df.empty:
-            sender_df.columns = ["Email", "Кількість"]
-            sender_chart = alt.Chart(sender_df).mark_bar().encode(
-                x=alt.X("Кількість:Q", title="Листів"),
-                y=alt.Y("Email:N", sort="-x", title="Відправник"),
-                tooltip=["Email", "Кількість"]
-            ).properties(height=500)
-            st.altair_chart(sender_chart, use_container_width=True)
+        # ===== Діаграма Парето для найактивніших відправників (за іменами) =====
+        st.subheader("👥 Найактивніші відправники (Парето)")
+        
+        # Групуємо за іменем (якщо ім'я порожнє – використовуємо email)
+        df_incoming = df[df["direction"] == "Вхідний"].copy()
+        df_incoming["display_name"] = df_incoming["sender_name"].fillna(df_incoming["clean_from"])
+        
+        sender_counts = df_incoming["display_name"].value_counts().head(20).reset_index()
+        sender_counts.columns = ["Ім'я", "Кількість"]
+        
+        if not sender_counts.empty:
+            # Обчислюємо кумулятивний відсоток
+            total = sender_counts["Кількість"].sum()
+            sender_counts["Кумулятивний %"] = (sender_counts["Кількість"].cumsum() / total * 100).round(1)
+            
+            # Стовпчики
+            bars = alt.Chart(sender_counts).mark_bar(color="steelblue").encode(
+                x=alt.X("Ім'я:N", title="Відправник", sort="-y"),
+                y=alt.Y("Кількість:Q", title="Листів"),
+                tooltip=["Ім'я", "Кількість", "Кумулятивний %"]
+            )
+            
+            # Лінія Парето
+            line = alt.Chart(sender_counts).mark_line(color="red", point=True).encode(
+                x=alt.X("Ім'я:N", sort="-y"),
+                y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
+                tooltip=["Ім'я", "Кумулятивний %"]
+            )
+            
+            chart = (bars + line).resolve_scale(y="independent").properties(height=500)
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("Немає даних про відправників.")
 
     # ========== TAB 3 — АКТИВНІСТЬ ==========
     with tab_activity:
@@ -929,7 +952,7 @@ if has_valid_data():
             ).properties(height=300)
             st.altair_chart(chart, use_container_width=True)
 
-    # ========== TAB 6 — ЧАС ВІДПОВІДІ (оновлено з правильним сортуванням) ==========
+    # ========== TAB 6 — ЧАС ВІДПОВІДІ ==========
     with tab_response_time:
         st.subheader("⏱️ Час відповіді")
         if response_df.empty:
@@ -1012,7 +1035,7 @@ if has_valid_data():
             daily_display = daily_counts.rename(columns={"date_only": "Дата", "Кількість": "Листів"}).copy()
             st.dataframe(daily_display, use_container_width=True, hide_index=True)
 
-    # ========== TAB 8 — ЛАНЦЮЖКИ ==========
+    # ========== TAB 8 — ЛАНЦЮЖКИ (оновлено: звичайна стовпчаста діаграма) ==========
     with tab_threads:
         st.subheader("🧵 Аналіз ланцюжків листування")
 
@@ -1033,25 +1056,14 @@ if has_valid_data():
 
             st.divider()
 
-            st.subheader("📊 Розподіл ланцюжків за довжиною (діаграма Парето)")
+            # Проста стовпчаста діаграма (без лінії Парето)
+            st.subheader("📊 Розподіл ланцюжків за довжиною")
             if not thread_analysis["length_dist"].empty:
-                length_df = thread_analysis["length_dist"].sort_values("Довжина")
-                total = length_df["Кількість"].sum()
-                length_df["Кумулятивний %"] = (length_df["Кількість"].cumsum() / total * 100).round(1)
-                
-                bars = alt.Chart(length_df).mark_bar(color="steelblue").encode(
+                chart = alt.Chart(thread_analysis["length_dist"]).mark_bar(color="steelblue").encode(
                     x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
                     y=alt.Y("Кількість:Q", title="Кількість ланцюжків"),
-                    tooltip=["Довжина", "Кількість", "Кумулятивний %"]
-                )
-                
-                line = alt.Chart(length_df).mark_line(color="red", point=True).encode(
-                    x=alt.X("Довжина:O", title="Кількість листів у ланцюжку"),
-                    y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
-                    tooltip=["Довжина", "Кумулятивний %"]
-                )
-                
-                chart = (bars + line).resolve_scale(y="independent").properties(height=400)
+                    tooltip=["Довжина", "Кількість"]
+                ).properties(height=400)
                 st.altair_chart(chart, use_container_width=True)
 
             st.subheader("🏆 Найдовші ланцюжки")
