@@ -793,7 +793,7 @@ if has_valid_data():
             median_response = response_df["response_time"].median()
             st.markdown(f"<div class='insight-card'>⏱️ <b>Медіанний час відповіді:</b> {format_timedelta(median_response)}.</div>", unsafe_allow_html=True)
 
-    # ========== TAB 2 — КОНТАКТИ (оновлено) ==========
+    # ========== TAB 2 — КОНТАКТИ (оновлено: виправлено Парето) ==========
     with tab_contacts:
         st.subheader("🌟 Найактивніші контакти")
         contacts = build_contact_ranking(df)
@@ -824,36 +824,35 @@ if has_valid_data():
         # ===== Діаграма Парето для найактивніших відправників (за іменами) =====
         st.subheader("👥 Найактивніші відправники (Парето)")
         
-        # Групуємо за іменем (якщо ім'я порожнє – використовуємо email)
         df_incoming = df[df["direction"] == "Вхідний"].copy()
-        df_incoming["display_name"] = df_incoming["sender_name"].fillna(df_incoming["clean_from"])
-        
-        sender_counts = df_incoming["display_name"].value_counts().head(20).reset_index()
-        sender_counts.columns = ["Ім'я", "Кількість"]
-        
-        if not sender_counts.empty:
-            # Обчислюємо кумулятивний відсоток
-            total = sender_counts["Кількість"].sum()
-            sender_counts["Кумулятивний %"] = (sender_counts["Кількість"].cumsum() / total * 100).round(1)
+        if not df_incoming.empty:
+            # Замінюємо порожні імена на email
+            df_incoming["display_name"] = df_incoming["sender_name"].replace("", pd.NA).fillna(df_incoming["clean_from"])
+            sender_counts = df_incoming["display_name"].value_counts().head(20).reset_index()
+            sender_counts.columns = ["Ім'я", "Кількість"]
             
-            # Стовпчики
-            bars = alt.Chart(sender_counts).mark_bar(color="steelblue").encode(
-                x=alt.X("Ім'я:N", title="Відправник", sort="-y"),
-                y=alt.Y("Кількість:Q", title="Листів"),
-                tooltip=["Ім'я", "Кількість", "Кумулятивний %"]
-            )
-            
-            # Лінія Парето
-            line = alt.Chart(sender_counts).mark_line(color="red", point=True).encode(
-                x=alt.X("Ім'я:N", sort="-y"),
-                y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
-                tooltip=["Ім'я", "Кумулятивний %"]
-            )
-            
-            chart = (bars + line).resolve_scale(y="independent").properties(height=500)
-            st.altair_chart(chart, use_container_width=True)
+            if not sender_counts.empty:
+                total = sender_counts["Кількість"].sum()
+                sender_counts["Кумулятивний %"] = (sender_counts["Кількість"].cumsum() / total * 100).round(1)
+                
+                bars = alt.Chart(sender_counts).mark_bar(color="steelblue").encode(
+                    x=alt.X("Ім'я:N", title="Відправник", sort="-y"),
+                    y=alt.Y("Кількість:Q", title="Листів"),
+                    tooltip=["Ім'я", "Кількість", "Кумулятивний %"]
+                )
+                
+                line = alt.Chart(sender_counts).mark_line(color="red", point=True).encode(
+                    x=alt.X("Ім'я:N", sort="-y"),
+                    y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
+                    tooltip=["Ім'я", "Кумулятивний %"]
+                )
+                
+                chart = (bars + line).resolve_scale(y="independent").properties(height=500)
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.info("Немає даних про відправників.")
         else:
-            st.info("Немає даних про відправників.")
+            st.info("Немає вхідних листів.")
 
     # ========== TAB 3 — АКТИВНІСТЬ ==========
     with tab_activity:
@@ -1035,7 +1034,7 @@ if has_valid_data():
             daily_display = daily_counts.rename(columns={"date_only": "Дата", "Кількість": "Листів"}).copy()
             st.dataframe(daily_display, use_container_width=True, hide_index=True)
 
-    # ========== TAB 8 — ЛАНЦЮЖКИ (оновлено: звичайна стовпчаста діаграма) ==========
+    # ========== TAB 8 — ЛАНЦЮЖКИ ==========
     with tab_threads:
         st.subheader("🧵 Аналіз ланцюжків листування")
 
@@ -1056,7 +1055,6 @@ if has_valid_data():
 
             st.divider()
 
-            # Проста стовпчаста діаграма (без лінії Парето)
             st.subheader("📊 Розподіл ланцюжків за довжиною")
             if not thread_analysis["length_dist"].empty:
                 chart = alt.Chart(thread_analysis["length_dist"]).mark_bar(color="steelblue").encode(
