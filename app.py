@@ -793,7 +793,7 @@ if has_valid_data():
             median_response = response_df["response_time"].median()
             st.markdown(f"<div class='insight-card'>⏱️ <b>Медіанний час відповіді:</b> {format_timedelta(median_response)}.</div>", unsafe_allow_html=True)
 
-    # ========== TAB 2 — КОНТАКТИ (оновлено: виправлено Парето) ==========
+    # ========== TAB 2 — КОНТАКТИ (оновлено: використовуємо email замість імен) ==========
     with tab_contacts:
         st.subheader("🌟 Найактивніші контакти")
         contacts = build_contact_ranking(df)
@@ -821,30 +821,29 @@ if has_valid_data():
                 }
             )
 
-        # ===== Діаграма Парето для найактивніших відправників (за іменами) =====
+        # ===== Діаграма Парето для найактивніших відправників (за email) =====
         st.subheader("👥 Найактивніші відправники (Парето)")
         
         df_incoming = df[df["direction"] == "Вхідний"].copy()
         if not df_incoming.empty:
-            # Замінюємо порожні імена на email
-            df_incoming["display_name"] = df_incoming["sender_name"].replace("", pd.NA).fillna(df_incoming["clean_from"])
-            sender_counts = df_incoming["display_name"].value_counts().head(20).reset_index()
-            sender_counts.columns = ["Ім'я", "Кількість"]
+            # Використовуємо clean_from (email) замість імен
+            sender_counts = df_incoming["clean_from"].value_counts().head(20).reset_index()
+            sender_counts.columns = ["Відправник", "Кількість"]
             
             if not sender_counts.empty:
                 total = sender_counts["Кількість"].sum()
                 sender_counts["Кумулятивний %"] = (sender_counts["Кількість"].cumsum() / total * 100).round(1)
                 
                 bars = alt.Chart(sender_counts).mark_bar(color="steelblue").encode(
-                    x=alt.X("Ім'я:N", title="Відправник", sort="-y"),
+                    x=alt.X("Відправник:N", title="Відправник", sort="-y"),
                     y=alt.Y("Кількість:Q", title="Листів"),
-                    tooltip=["Ім'я", "Кількість", "Кумулятивний %"]
+                    tooltip=["Відправник", "Кількість", "Кумулятивний %"]
                 )
                 
                 line = alt.Chart(sender_counts).mark_line(color="red", point=True).encode(
-                    x=alt.X("Ім'я:N", sort="-y"),
+                    x=alt.X("Відправник:N", sort="-y"),
                     y=alt.Y("Кумулятивний %:Q", title="Кумулятивний %", scale=alt.Scale(domain=[0, 100])),
-                    tooltip=["Ім'я", "Кумулятивний %"]
+                    tooltip=["Відправник", "Кумулятивний %"]
                 )
                 
                 chart = (bars + line).resolve_scale(y="independent").properties(height=500)
